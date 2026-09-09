@@ -1,0 +1,5949 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>DiscoverAI — Semantic Product Search</title>
+
+<!-- React (CDN, no build step) -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<!-- React Router (CDN) - gives real client-side routes (/, /search, /results)
+     with a working back button and bookmarkable URLs, without the full-page
+     reload a classic multi-page app would cost on every navigation.
+     Since v6, React Router's UMD build split into 3 packages that must load
+     in this exact order, each exposing its own global: @remix-run/router
+     (window.RemixRouter) -> react-router (window.ReactRouter) -> react-router-dom
+     (window.ReactRouterDOM). All 3 are pinned to their exact resolved paths
+     (found via unpkg's ?meta) - the plain "@6" tag 404s/CORS-fails because
+     it 302-redirects to resolve the version first. -->
+<script crossorigin src="https://unpkg.com/@remix-run/router@1.23.3/dist/router.umd.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-router@6.30.4/dist/umd/react-router.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-router-dom@6.30.4/dist/umd/react-router-dom.production.min.js"></script>
+<!-- Babel lets the browser understand JSX directly, no build step needed -->
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<style>
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    min-height: 100vh;
+    color: #222;
+  }
+
+  .suggestions {
+    margin-top: 14px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .suggestions span {
+    font-size: 0.85em;
+    color: #888;
+  }
+
+  .chip {
+    background: #f0f0ff;
+    color: #5568d3;
+    border: 1px solid #d8dcff;
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 0.85em;
+    cursor: pointer;
+    transition: background 0.2s ease;
+  }
+
+  .chip:hover {
+    background: #e0e4ff;
+  }
+
+  /* ---------- Search Results page ---------- */
+  .results-count-label {
+    padding: 14px 16px 4px;
+    font-size: 0.85em;
+    font-weight: 700;
+    color: #666;
+  }
+
+  .error-box {
+    background: #fdecea;
+    border-left: 4px solid #e74c3c;
+    color: #8a2c22;
+    padding: 14px 18px;
+    border-radius: 8px;
+    margin: 16px;
+  }
+
+  .similarity-badge {
+    display: inline-block;
+    background: #e8f5e9;
+    color: #2e7d32;
+    font-size: 0.68em;
+    font-weight: 700;
+    padding: 3px 8px;
+    border-radius: 20px;
+    margin: 2px 0 8px;
+  }
+
+  /* Rank pill overlaid on the result card's image, top-left - mirrors
+     the position of the PLP organic/quantity badges so search results
+     feel like the same visual family as category browsing, just with
+     their own rank + match signal instead. */
+  .result-rank-badge {
+    position: absolute;
+    top: 14px;
+    left: 14px;
+    z-index: 2;
+    background: rgba(20,20,30,0.72);
+    color: white;
+    font-size: 0.72em;
+    font-weight: 800;
+    padding: 3px 8px;
+    border-radius: 4px;
+    box-shadow: 0 1px 5px rgba(0,0,0,0.35);
+  }
+
+  .result-explain-btn {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 2;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: none;
+    background: rgba(255,255,255,0.92);
+    color: #667eea;
+    font-size: 0.95em;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 1px 5px rgba(0,0,0,0.3);
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+
+  .result-explain-btn:hover {
+    background: #667eea;
+    color: white;
+  }
+
+  /* Grid items default to min-width: auto, meaning long unbreakable
+     content can force this card's 1fr column wider than its share of
+     the grid - blowing the whole grid, and the 430px mobile frame
+     around it, out to the content's width. min-width: 0 lets the
+     column actually shrink back to 1fr regardless of content length. */
+  .result-card {
+    min-width: 0;
+  }
+
+  /* Side panel */
+  .panel-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.4);
+    z-index: 100;
+  }
+
+  .side-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 400px;
+    max-width: 92vw;
+    background: white;
+    z-index: 101;
+    box-shadow: -8px 0 30px rgba(0,0,0,0.3);
+    overflow-y: auto;
+    padding: 24px;
+  }
+
+  .panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 20px;
+  }
+
+  .panel-title {
+    font-weight: 700;
+    font-size: 1.1em;
+    line-height: 1.3;
+    padding-right: 12px;
+  }
+
+  .panel-close {
+    border: none;
+    background: #f0f0f5;
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 1em;
+    flex-shrink: 0;
+  }
+
+  .panel-section {
+    margin-bottom: 22px;
+  }
+
+  .panel-section-title {
+    font-size: 0.78em;
+    font-weight: 700;
+    color: #667eea;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 10px;
+  }
+
+  .panel-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.88em;
+    color: #444;
+    padding: 5px 0;
+    border-bottom: 1px dashed #eee;
+  }
+
+  .panel-row span:last-child {
+    font-weight: 700;
+    color: #222;
+  }
+
+  .formula-box, .text-box {
+    background: #f7f7fb;
+    border-left: 3px solid #667eea;
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.78em;
+    color: #333;
+    line-height: 1.5;
+    margin-top: 8px;
+    word-break: break-word;
+    white-space: pre-line;
+  }
+
+  .compare-box {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .compare-card {
+    flex: 1;
+    background: #f7f7fb;
+    border-radius: 8px;
+    padding: 10px;
+    font-size: 0.8em;
+  }
+
+  .compare-card.winner {
+    background: #e8f5e9;
+  }
+
+  .compare-card .name {
+    font-weight: 700;
+    margin-bottom: 4px;
+    line-height: 1.3;
+  }
+
+  .compare-arrow {
+    color: #ccc;
+    font-size: 1.2em;
+  }
+
+  .panel-note {
+    font-size: 0.85em;
+    color: #666;
+    line-height: 1.5;
+    margin-top: 10px;
+  }
+
+  .top-result-note {
+    background: #fff8e1;
+    border-left: 3px solid #ffc107;
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 0.85em;
+    color: #7a5c00;
+  }
+
+  .empty-state {
+    text-align: center;
+    color: #999;
+    padding: 60px 24px;
+    font-size: 0.95em;
+  }
+
+  footer {
+    text-align: center;
+    color: white;
+    opacity: 0.75;
+    margin-top: 50px;
+    font-size: 0.85em;
+  }
+
+  /* ---------- Mobile app frame (Home / Search pages) ---------- */
+  .app-frame {
+    max-width: 430px;
+    margin: 0 auto;
+    min-height: 100vh;
+    background: #f6f6fb;
+    box-shadow: 0 0 40px rgba(0,0,0,0.25);
+  }
+
+  .app-top {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    padding: 18px 16px 20px;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+
+  .fake-search-bar {
+    background: white;
+    border-radius: 24px;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: #999;
+    font-size: 0.95em;
+    cursor: pointer;
+    border: none;
+    width: 100%;
+    text-align: left;
+  }
+
+  .fake-search-bar:hover {
+    box-shadow: 0 4px 14px rgba(0,0,0,0.15);
+  }
+
+  .real-search-bar {
+    background: white;
+    border-radius: 24px;
+    padding: 4px 6px 4px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .real-search-bar input {
+    flex: 1;
+    border: none;
+    outline: none;
+    font-size: 0.95em;
+    padding: 8px 0;
+  }
+
+  .real-search-bar button {
+    border: none;
+    background: #667eea;
+    color: white;
+    border-radius: 20px;
+    padding: 9px 16px;
+    font-size: 0.85em;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .back-arrow {
+    background: none;
+    border: none;
+    color: white;
+    font-size: 1.8em;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    padding: 0 4px 0 0;
+  }
+
+
+  .section-block {
+    padding: 18px 16px 4px;
+  }
+
+  .section-heading {
+    font-size: 1.15em;
+    font-weight: 800;
+    color: #333;
+    margin-bottom: 12px;
+  }
+
+  .tile-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+
+  .tile {
+    background: white;
+    border-radius: 10px;
+    padding: 8px 6px;
+    text-align: center;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    cursor: pointer;
+  }
+
+  .tile-icon {
+    width: 94px;
+    height: 94px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: white;
+    font-weight: 800;
+    font-size: 1.8em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto 8px;
+  }
+
+  .tile-name {
+    font-size: 0.75em;
+    font-weight: 600;
+    color: #444;
+    line-height: 1.25;
+  }
+
+  .home-loading, .home-empty {
+    text-align: center;
+    color: #999;
+    padding: 40px 16px;
+    font-size: 0.9em;
+  }
+
+  .persona-switch-link {
+    display: block;
+    margin: 4px auto 8px;
+    background: none;
+    border: none;
+    color: #bbb;
+    font-size: 0.68em;
+    text-align: center;
+    cursor: pointer;
+    padding: 6px;
+  }
+
+  /* ---------- Search page ---------- */
+  .popular-label {
+    padding: 20px 16px 10px;
+    font-size: 0.78em;
+    font-weight: 800;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .popular-chip-list {
+    padding: 0 16px 16px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+
+  .popular-chip {
+    background: white;
+    border: 1px solid #e4e4f0;
+    color: #444;
+    padding: 9px 16px;
+    border-radius: 20px;
+    font-size: 0.85em;
+    cursor: pointer;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+  }
+
+  .popular-chip:hover {
+    border-color: #667eea;
+    color: #667eea;
+  }
+
+  /* ---------- PLP (category tile -> product listing) ---------- */
+  .plp-filter-bar {
+    position: sticky;
+    top: 0;
+    z-index: 9;
+    background: #f6f6fb;
+    border-bottom: 1px solid #ebebf2;
+    padding: 8px 12px;
+  }
+
+  /* Same look as .plp-filter-bar, but NOT sticky - the Results page's own
+     header (.app-top) is already sticky at top:0, and two sticky
+     siblings both pinned to top:0 would stack on top of each other
+     instead of one appearing below the other. PLP gets away with a
+     sticky filter bar because its header (.home-top) isn't sticky. */
+  .results-filter-bar {
+    background: #f6f6fb;
+    border-bottom: 1px solid #ebebf2;
+    padding: 8px 12px;
+  }
+
+  .plp-filter-strip {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .plp-filter-chip-wrap {
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .plp-filter-chip {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: white;
+    border: 1.5px solid #e4e4f0;
+    color: #444;
+    font-weight: 700;
+    font-size: 0.76em;
+    padding: 6px 12px;
+    border-radius: 16px;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .plp-filter-chip.active {
+    border-color: #667eea;
+    color: #667eea;
+    background: #eef0ff;
+  }
+
+  .plp-filter-clear {
+    color: #999;
+    border-color: transparent;
+    background: none;
+  }
+
+  .plp-filter-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+  }
+
+  .plp-price-dropdown {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    z-index: 11;
+    background: white;
+    border: 1px solid #ebebf2;
+    border-radius: 10px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.15);
+    padding: 14px;
+    width: 200px;
+  }
+
+  .plp-price-dropdown-label {
+    font-size: 0.8em;
+    font-weight: 700;
+    color: #444;
+    margin-bottom: 8px;
+  }
+
+  .plp-brand-dropdown {
+    width: 220px;
+    padding: 12px;
+  }
+
+  .plp-brand-list {
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  .plp-brand-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85em;
+    font-weight: 600;
+    color: #444;
+    padding: 7px 2px;
+    cursor: pointer;
+  }
+
+  .plp-brand-row input {
+    accent-color: #667eea;
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+  }
+
+  .plp-body {
+    display: flex;
+    align-items: flex-start;
+  }
+
+  .plp-sidebar {
+    width: 84px;
+    flex-shrink: 0;
+    background: #f6f6fb;
+    border-right: 1px solid #ebebf2;
+    position: sticky;
+    top: 45px;
+    max-height: calc(100vh - 45px);
+    overflow-y: auto;
+  }
+
+  .plp-sidebar-empty {
+    padding: 16px 8px;
+    text-align: center;
+    color: #999;
+    font-size: 0.72em;
+  }
+
+  .plp-sidebar-item {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 12px 6px;
+    text-align: center;
+    cursor: pointer;
+    border-left: 4px solid transparent;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
+  }
+
+  .plp-sidebar-item.active {
+    background: #e8e9fc;
+    border-left-color: #667eea;
+  }
+
+  .plp-sidebar-item img, .plp-sidebar-fallback {
+    width: 38px;
+    height: 38px;
+    border-radius: 6px;
+    object-fit: cover;
+    flex-shrink: 0;
+    box-shadow: 0 0 0 2px transparent;
+    transition: box-shadow 0.15s ease;
+  }
+
+  .plp-sidebar-item.active img, .plp-sidebar-item.active .plp-sidebar-fallback {
+    box-shadow: 0 0 0 2px #667eea;
+  }
+
+  .plp-sidebar-fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: white;
+    font-weight: 800;
+    font-size: 1em;
+  }
+
+  .plp-sidebar-label {
+    font-size: 0.62em;
+    font-weight: 700;
+    color: #666;
+    line-height: 1.15;
+  }
+
+  .plp-sidebar-item.active .plp-sidebar-label {
+    color: #4c4ee0;
+    font-weight: 800;
+  }
+
+  .plp-main {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .plp-category-heading {
+    font-size: 0.95em;
+    font-weight: 800;
+    color: #333;
+    padding: 14px 10px 2px;
+  }
+
+  .plp-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    padding: 10px;
+  }
+
+  .plp-card {
+    position: relative;
+    background: white;
+    border-radius: 10px;
+    padding: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  }
+
+  .organic-badge {
+    position: absolute;
+    top: 14px;
+    left: 14px;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    background: white;
+    color: #1e7d32;
+    font-size: 0.62em;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    padding: 3px 7px;
+    border-radius: 4px;
+    box-shadow: 0 1px 5px rgba(0,0,0,0.35);
+  }
+
+  .quantity-badge {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    z-index: 2;
+    background: #333;
+    color: white;
+    font-size: 0.8em;
+    font-weight: 800;
+    padding: 3px 8px;
+    border-radius: 4px;
+    box-shadow: 0 1px 5px rgba(0,0,0,0.35);
+  }
+
+  .plp-card-image {
+    width: 100%;
+    height: 120px;
+    border-radius: 6px;
+    object-fit: cover;
+    display: block;
+    margin-bottom: 8px;
+    background: #f0f0f5;
+  }
+
+  .plp-card-image-fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: white;
+    font-weight: 800;
+    font-size: 2em;
+  }
+
+  .plp-card-brand {
+    font-size: 0.68em;
+    color: #999;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+
+  .plp-card-name {
+    font-size: 0.82em;
+    font-weight: 600;
+    color: #333;
+    line-height: 1.3;
+    margin: 3px 0 8px;
+    min-height: 2.1em;
+  }
+
+  .plp-card-price-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+
+  .plp-card-price {
+    font-weight: 800;
+    color: #333;
+    font-size: 0.9em;
+  }
+
+  .plp-add-btn {
+    background: #667eea;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 0.72em;
+    font-weight: 700;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .plp-add-btn:disabled {
+    background: #ccc;
+    cursor: default;
+  }
+
+  .inline-qty-stepper {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: #667eea;
+    border-radius: 6px;
+    padding: 5px 9px;
+  }
+
+  .inline-qty-stepper button {
+    background: none;
+    border: none;
+    color: white;
+    font-size: 1em;
+    font-weight: 800;
+    width: 14px;
+    cursor: pointer;
+    line-height: 1;
+    padding: 0;
+  }
+
+  .inline-qty-stepper button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .inline-qty-stepper span {
+    color: white;
+    font-size: 0.78em;
+    font-weight: 800;
+    min-width: 12px;
+    text-align: center;
+  }
+
+  /* ---------- Product Detail Page ---------- */
+  .pdp-breadcrumb {
+    font-size: 0.72em;
+    color: #999;
+    padding: 12px 16px 0;
+  }
+
+  .pdp-hero-image {
+    width: 100%;
+    height: 280px;
+    object-fit: cover;
+    display: block;
+    background: #f0f0f5;
+    margin-top: 8px;
+  }
+
+  .pdp-hero-image-fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: white;
+    font-weight: 800;
+    font-size: 4em;
+  }
+
+  .pdp-info {
+    background: white;
+    margin: 0 16px;
+    margin-top: -16px;
+    border-radius: 14px;
+    padding: 16px;
+    position: relative;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+  }
+
+  .pdp-organic-badge {
+    position: static;
+    display: inline-flex;
+    box-shadow: none;
+    border: 1px solid #cdeccf;
+    margin-bottom: 6px;
+  }
+
+  .pdp-title {
+    font-size: 1.15em;
+    font-weight: 800;
+    color: #333;
+    margin: 4px 0 8px;
+    line-height: 1.3;
+  }
+
+  .pdp-rating-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 10px;
+  }
+
+  .pdp-rating {
+    background: #1e7d32;
+    color: white;
+    font-size: 0.78em;
+    font-weight: 800;
+    padding: 2px 8px;
+    border-radius: 5px;
+  }
+
+  .pdp-review-count {
+    font-size: 0.78em;
+    color: #999;
+  }
+
+  .pdp-price-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+
+  .pdp-price {
+    font-size: 1.5em;
+    font-weight: 800;
+    color: #333;
+  }
+
+  .pdp-original-price {
+    font-size: 0.9em;
+    color: #999;
+    text-decoration: line-through;
+  }
+
+  .pdp-discount-badge {
+    background: #fdeeee;
+    color: #d32f2f;
+    font-size: 0.75em;
+    font-weight: 800;
+    padding: 2px 8px;
+    border-radius: 5px;
+  }
+
+  .pdp-stock-line {
+    font-size: 0.82em;
+    font-weight: 700;
+    color: #1e7d32;
+    margin-bottom: 14px;
+  }
+
+  .pdp-stock-line.out {
+    color: #d32f2f;
+  }
+
+  .pdp-add-row {
+    margin-bottom: 4px;
+  }
+
+  .pdp-add-row .plp-add-btn {
+    width: 100%;
+    padding: 12px;
+    font-size: 0.85em;
+    border-radius: 8px;
+  }
+
+  .pdp-add-row .inline-qty-stepper {
+    width: 100%;
+    justify-content: center;
+    padding: 9px;
+  }
+
+  .pdp-section {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid #eee;
+  }
+
+  .pdp-description {
+    font-size: 0.85em;
+    color: #555;
+    line-height: 1.6;
+    margin: 0;
+  }
+
+  .pdp-spec-table {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .pdp-spec-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 0.8em;
+    padding: 7px 0;
+    border-bottom: 1px dashed #f0f0f0;
+  }
+
+  .pdp-spec-row:last-child {
+    border-bottom: none;
+  }
+
+  .pdp-spec-label {
+    color: #888;
+  }
+
+  .pdp-spec-value {
+    color: #333;
+    font-weight: 700;
+    text-align: right;
+  }
+
+  .pdp-related-section {
+    background: white;
+    margin: 16px 0 0;
+    padding-top: 16px;
+    padding-bottom: 4px;
+  }
+
+  .pdp-ai-summary {
+    background: linear-gradient(135deg, #f5f3ff, #fdf2f8);
+  }
+
+  .pdp-ai-summary-block {
+    padding: 0 16px 12px;
+  }
+
+  .pdp-ai-summary-heading {
+    font-size: 0.78em;
+    font-weight: 800;
+    color: #333;
+    margin-bottom: 3px;
+  }
+
+  .pdp-ai-summary-text {
+    font-size: 0.82em;
+    color: #444;
+    line-height: 1.6;
+    margin: 0;
+  }
+
+  .pdp-related-scroll {
+    display: flex;
+    gap: 10px;
+    overflow-x: auto;
+    padding: 12px 16px 8px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .pdp-related-card {
+    position: relative;
+    background: white;
+    border: 1px solid #f0f0f5;
+    border-radius: 10px;
+    padding: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    flex: 0 0 140px;
+    width: 140px;
+  }
+
+  .pdp-related-card .plp-card-image {
+    height: 100px;
+  }
+
+  .star-picker {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 10px;
+  }
+
+  .star-picker-btn {
+    background: none;
+    border: none;
+    font-size: 1.8em;
+    line-height: 1;
+    color: #ddd;
+    cursor: pointer;
+    padding: 2px;
+  }
+
+  .star-picker-btn.filled {
+    color: #ffb400;
+  }
+
+  .pdp-review-form form {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .pdp-review-textarea {
+    width: 100%;
+    border: 1.5px solid #e4e4f0;
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 0.82em;
+    font-family: inherit;
+    color: #333;
+    resize: vertical;
+    margin-bottom: 6px;
+    box-sizing: border-box;
+  }
+
+  .pdp-review-hint {
+    font-size: 0.72em;
+    color: #d32f2f;
+    margin-bottom: 10px;
+  }
+
+  .pdp-review-error {
+    font-size: 0.78em;
+    color: #d32f2f;
+    background: #fdeeee;
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 10px;
+  }
+
+  .pdp-review-success {
+    font-size: 0.78em;
+    color: #1e7d32;
+    background: #e6f4ea;
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 10px;
+  }
+
+  .pdp-review-submit {
+    align-self: flex-start;
+    padding: 10px 20px !important;
+  }
+
+  .pdp-review-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 4px 16px 12px;
+  }
+
+  .pdp-review-card {
+    padding: 12px 0;
+    border-bottom: 1px solid #f0f0f0;
+  }
+
+  .pdp-review-card:last-child {
+    border-bottom: none;
+  }
+
+  .pdp-review-card-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 4px;
+  }
+
+  .pdp-review-author {
+    font-size: 0.82em;
+    font-weight: 700;
+    color: #333;
+  }
+
+  .pdp-review-stars {
+    color: #ffb400;
+    font-size: 0.85em;
+    letter-spacing: 1px;
+  }
+
+  .pdp-review-text {
+    font-size: 0.82em;
+    color: #555;
+    line-height: 1.5;
+    margin: 4px 0;
+  }
+
+  .pdp-review-date {
+    font-size: 0.68em;
+    color: #aaa;
+  }
+
+  .pdp-review-photo-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+
+  .pdp-review-photo-thumb {
+    position: relative;
+    width: 60px;
+    height: 60px;
+  }
+
+  .pdp-review-photo-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    border-radius: 8px;
+    display: block;
+  }
+
+  .pdp-review-photo-remove {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #333;
+    color: white;
+    border: none;
+    font-size: 0.75em;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .pdp-review-photo-add {
+    width: 60px;
+    height: 60px;
+    border-radius: 8px;
+    border: 1.5px dashed #ccc;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.3em;
+    cursor: pointer;
+    color: #999;
+  }
+
+  .pdp-review-photo-hint {
+    font-size: 0.68em;
+    color: #999;
+    margin-bottom: 6px;
+  }
+
+  .pdp-review-image-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 6px 0;
+  }
+
+  .pdp-review-image-thumb {
+    width: 56px;
+    height: 56px;
+    object-fit: cover;
+    border-radius: 8px;
+    display: block;
+  }
+
+  .filter-slider {
+    width: 100%;
+    accent-color: #667eea;
+  }
+
+  .filter-count {
+    color: #999;
+    font-size: 0.9em;
+  }
+
+  /* ---------- Persona picker (portfolio-demo "login") ---------- */
+  .persona-select-header {
+    text-align: center;
+    padding: 32px 20px 24px;
+  }
+
+  /* ---------- True landing page (2 cards: Storefront / Retailer Admin) ---------- */
+  .landing-hero-cards {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    padding: 20px;
+  }
+
+  .landing-hero-card {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    background: white;
+    border: none;
+    border-radius: 18px;
+    padding: 22px 20px;
+    text-align: left;
+    cursor: pointer;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.08);
+    border-left: 5px solid #667eea;
+    font-family: inherit;
+  }
+
+  .landing-hero-icon {
+    font-size: 2.4em;
+    line-height: 1;
+    flex-shrink: 0;
+  }
+
+  .landing-hero-body {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .landing-hero-label {
+    font-weight: 800;
+    font-size: 1.05em;
+    color: #2a2a2a;
+    margin-bottom: 4px;
+  }
+
+  .landing-hero-caption {
+    font-size: 0.78em;
+    color: #777;
+    line-height: 1.4;
+  }
+
+  .landing-hero-arrow {
+    font-size: 1.4em;
+    color: #667eea;
+    flex-shrink: 0;
+  }
+
+  .admin-module-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    padding: 16px;
+  }
+
+  .admin-module-card {
+    background: white;
+    border-radius: 14px;
+    padding: 18px 12px;
+    text-align: center;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+    border-top: 4px solid #667eea;
+    opacity: 0.75;
+  }
+
+  .admin-module-icon {
+    font-size: 1.8em;
+    margin-bottom: 8px;
+  }
+
+  .admin-module-label {
+    font-weight: 800;
+    font-size: 0.9em;
+    color: #333;
+    margin-bottom: 4px;
+  }
+
+  .admin-module-caption {
+    font-size: 0.72em;
+    color: #999;
+    line-height: 1.3;
+  }
+
+  .admin-module-card-active {
+    opacity: 1;
+    cursor: pointer;
+    border-top-color: #ffb400;
+    font-family: inherit;
+  }
+
+  .admin-review-tabs {
+    display: flex;
+    gap: 8px;
+    padding: 12px 16px;
+    background: white;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+  }
+
+  .admin-review-tab {
+    flex: 1;
+    background: #f3f3fa;
+    border: none;
+    border-radius: 8px;
+    padding: 9px 4px;
+    font-size: 0.78em;
+    font-weight: 700;
+    color: #888;
+    cursor: pointer;
+  }
+
+  .admin-review-tab.active {
+    background: #667eea;
+    color: white;
+  }
+
+  .admin-review-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px 16px;
+  }
+
+  .admin-review-card {
+    background: white;
+    border-radius: 12px;
+    padding: 14px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  }
+
+  .admin-review-card-top {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+
+  .admin-review-thumb {
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    object-fit: cover;
+    flex-shrink: 0;
+    background: #f0f0f5;
+  }
+
+  .admin-review-thumb-fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: white;
+    font-weight: 800;
+  }
+
+  .admin-review-meta {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .admin-review-product {
+    font-size: 0.82em;
+    font-weight: 700;
+    color: #333;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .admin-review-persona {
+    font-size: 0.7em;
+    color: #999;
+    margin-top: 2px;
+  }
+
+  .admin-review-text {
+    font-size: 0.82em;
+    color: #555;
+    line-height: 1.5;
+    margin: 6px 0 10px;
+  }
+
+  .admin-review-rejection-tag {
+    display: inline-block;
+    background: #fdeeee;
+    color: #d32f2f;
+    font-size: 0.7em;
+    font-weight: 700;
+    padding: 4px 9px;
+    border-radius: 6px;
+    margin-bottom: 4px;
+  }
+
+  .ai-mod-badge {
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+    font-size: 0.78em;
+  }
+
+  .ai-mod-badge-approved {
+    background: #eaf7ed;
+    border: 1px solid #bfe6c6;
+  }
+
+  .ai-mod-badge-rejected {
+    background: #fdeeee;
+    border: 1px solid #f3c6c6;
+  }
+
+  .ai-mod-badge-title {
+    font-weight: 800;
+    color: #333;
+  }
+
+  .ai-mod-badge-note {
+    margin-top: 3px;
+    color: #666;
+    line-height: 1.4;
+  }
+
+  .ai-agree-tag {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.72em;
+    font-weight: 700;
+    padding: 6px 10px;
+    border-radius: 8px;
+  }
+
+  .ai-agree-tag-yes {
+    background: #eaf7ed;
+    color: #1e7d32;
+  }
+
+  .ai-agree-tag-no {
+    background: #fff4e5;
+    color: #b56a00;
+  }
+
+  .ai-run-cta-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 0 16px 12px;
+  }
+
+  .ai-run-cta-btn {
+    background: linear-gradient(135deg, #7c5cff, #5b3fd9);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 10px 18px;
+    font-size: 0.82em;
+    font-weight: 800;
+    cursor: pointer;
+  }
+
+  .ai-run-cta-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+
+  .ai-run-cta-result {
+    font-size: 0.76em;
+    color: #555;
+  }
+
+  .ai-run-cta-result-error {
+    color: #d32f2f;
+  }
+
+  .ai-force-rerun-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 0.76em;
+    color: #555;
+    cursor: pointer;
+  }
+
+  .admin-review-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .admin-approve-btn {
+    background: #1e7d32;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 0.78em;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .admin-reject-btn {
+    background: #d32f2f;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 0.78em;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .admin-reject-btn:disabled {
+    background: #eeb4b4;
+    cursor: default;
+  }
+
+  .admin-cancel-btn {
+    background: #f3f3fa;
+    color: #666;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 0.78em;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .admin-resubmit-btn {
+    background: white;
+    color: #667eea;
+    border: 1.5px solid #667eea;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 0.78em;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .admin-resubmit-btn:disabled {
+    opacity: 0.6;
+    cursor: default;
+  }
+
+  .rs-flow {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    margin-top: 10px;
+  }
+
+  .rs-flow-step {
+    display: flex;
+    gap: 10px;
+    background: #faf9ff;
+    border: 1px solid #ece9fb;
+    border-radius: 10px;
+    padding: 10px 12px;
+    transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+  }
+
+  .rs-flow-step-active {
+    background: #f1ecff;
+    border-color: #7c5cff;
+    box-shadow: 0 0 0 3px rgba(124, 92, 255, 0.18);
+    transform: scale(1.02);
+  }
+
+  .rs-flow-icon {
+    font-size: 1.6em;
+    flex-shrink: 0;
+    line-height: 1;
+  }
+
+  .rs-flow-body {
+    min-width: 0;
+  }
+
+  .rs-flow-title {
+    font-size: 0.8em;
+    font-weight: 800;
+    color: #333;
+    margin-bottom: 4px;
+  }
+
+  .rs-flow-points {
+    margin: 0;
+    padding-left: 16px;
+  }
+
+  .rs-flow-points li {
+    font-size: 0.74em;
+    color: #666;
+    line-height: 1.5;
+    margin-bottom: 3px;
+  }
+
+  .rs-flow-arrow {
+    text-align: center;
+    color: #667eea;
+    font-size: 1.1em;
+    font-weight: 800;
+    padding: 2px 0;
+  }
+
+  .admin-reject-panel {
+    background: #faf7f2;
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-top: 4px;
+  }
+
+  .admin-reject-reason {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-size: 0.76em;
+    color: #444;
+    padding: 6px 0;
+    cursor: pointer;
+  }
+
+  .persona-select-title {
+    color: white;
+    font-size: 1.3em;
+    font-weight: 800;
+    margin-bottom: 8px;
+  }
+
+  .persona-select-subtitle {
+    color: rgba(255,255,255,0.85);
+    font-size: 0.82em;
+    line-height: 1.4;
+  }
+
+  .persona-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    padding: 16px;
+  }
+
+  .persona-card {
+    background: white;
+    border: none;
+    border-radius: 14px;
+    padding: 18px 12px;
+    text-align: center;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    cursor: pointer;
+    border-top: 4px solid var(--persona-color, #667eea);
+  }
+
+  .persona-avatar {
+    width: 56px;
+    height: 56px;
+    border-radius: 12px;
+    background: var(--persona-color, #667eea);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.7em;
+    margin: 0 auto 10px;
+  }
+
+  .persona-name {
+    font-size: 0.95em;
+    font-weight: 800;
+    color: #333;
+    margin-bottom: 6px;
+  }
+
+  .persona-trait {
+    font-size: 0.72em;
+    color: #777;
+    line-height: 1.35;
+  }
+
+  /* ---------- Cart page ---------- */
+  .cart-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 90px 24px;
+    color: #666;
+  }
+
+  .cart-empty-icon {
+    font-size: 3em;
+    margin-bottom: 16px;
+  }
+
+  .cart-empty-text {
+    font-size: 1em;
+    font-weight: 700;
+    margin-bottom: 18px;
+  }
+
+  .cart-empty-cta {
+    background: #667eea;
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 11px 24px;
+    font-size: 0.85em;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .cart-list {
+    padding: 14px 16px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .cart-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    background: white;
+    border-radius: 12px;
+    padding: 12px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  }
+
+  .cart-row-image {
+    width: 64px;
+    height: 64px;
+    border-radius: 8px;
+    object-fit: cover;
+    flex-shrink: 0;
+    background: #f0f0f5;
+  }
+
+  .cart-row-image-fallback {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: white;
+    font-weight: 800;
+    font-size: 1.4em;
+  }
+
+  .cart-row-main {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .cart-row-brand {
+    font-size: 0.66em;
+    color: #999;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+
+  .cart-row-name {
+    font-size: 0.86em;
+    font-weight: 700;
+    color: #333;
+    line-height: 1.3;
+    margin: 2px 0 3px;
+  }
+
+  .cart-row-pack {
+    font-size: 0.72em;
+    color: #888;
+    margin-bottom: 8px;
+  }
+
+  .cart-row-bottom {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 8px;
+  }
+
+  .cart-row-price {
+    font-weight: 800;
+    color: #333;
+    font-size: 0.9em;
+  }
+
+  .qty-stepper {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border: 1.5px solid #e4e4f0;
+    border-radius: 8px;
+    padding: 3px 8px;
+  }
+
+  .qty-stepper button {
+    background: none;
+    border: none;
+    color: #667eea;
+    font-size: 1.1em;
+    font-weight: 800;
+    width: 18px;
+    cursor: pointer;
+    line-height: 1;
+  }
+
+  .qty-stepper span {
+    font-size: 0.85em;
+    font-weight: 700;
+    color: #333;
+    min-width: 14px;
+    text-align: center;
+  }
+
+  .cart-row-remove {
+    background: none;
+    border: none;
+    color: #bbb;
+    font-size: 0.85em;
+    cursor: pointer;
+    padding: 4px;
+    flex-shrink: 0;
+  }
+
+  .cart-checkout-bar-spacer {
+    height: 78px;
+  }
+
+  .cart-checkout-bar {
+    position: fixed;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 100%;
+    max-width: 430px;
+    background: white;
+    border-top: 1px solid #e8e8f0;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    z-index: 20;
+    box-shadow: 0 -4px 16px rgba(0,0,0,0.08);
+  }
+
+  .cart-checkout-total {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .cart-checkout-label {
+    font-size: 0.68em;
+    color: #999;
+  }
+
+  .cart-checkout-amount {
+    font-size: 1.1em;
+    font-weight: 800;
+    color: #333;
+  }
+
+  .cart-checkout-btn {
+    background: #667eea;
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 13px 22px;
+    font-size: 0.85em;
+    font-weight: 700;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  /* ---------- Checkout / Order detail / Orders list ---------- */
+  .checkout-section {
+    background: white;
+    margin: 12px 16px 0;
+    border-radius: 12px;
+    padding: 14px 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+  }
+
+  .checkout-section-title {
+    font-size: 0.72em;
+    font-weight: 800;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    margin-bottom: 10px;
+  }
+
+  .checkout-delivery-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .checkout-persona-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.3em;
+    flex-shrink: 0;
+  }
+
+  .checkout-delivery-name {
+    font-size: 0.88em;
+    font-weight: 700;
+    color: #333;
+  }
+
+  .checkout-delivery-address {
+    font-size: 0.76em;
+    color: #888;
+    margin-top: 2px;
+  }
+
+  .checkout-item-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 0.82em;
+    color: #444;
+    padding: 6px 0;
+  }
+
+  .checkout-item-name {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .checkout-item-price {
+    font-weight: 700;
+    color: #333;
+    flex-shrink: 0;
+  }
+
+  .checkout-total-row {
+    border-top: 1px solid #eee;
+    margin-top: 6px;
+    padding-top: 10px;
+    font-weight: 800;
+    font-size: 0.9em;
+    color: #333;
+  }
+
+  .order-success-banner {
+    text-align: center;
+    padding: 28px 20px 16px;
+  }
+
+  .order-success-icon {
+    font-size: 2.6em;
+    margin-bottom: 8px;
+  }
+
+  .order-success-title {
+    font-size: 1.1em;
+    font-weight: 800;
+    color: #333;
+    margin-bottom: 4px;
+  }
+
+  .order-success-subtitle {
+    font-size: 0.78em;
+    color: #999;
+  }
+
+  .order-detail-row {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.82em;
+    color: #666;
+    padding: 6px 0;
+  }
+
+  .order-detail-value {
+    font-weight: 700;
+    color: #333;
+  }
+
+  .order-status-badge {
+    background: #e6f4ea;
+    color: #1e7d32;
+    font-size: 0.7em;
+    font-weight: 800;
+    padding: 3px 9px;
+    border-radius: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+
+  .order-detail-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 20px 16px 8px;
+  }
+
+  .order-detail-secondary-btn {
+    background: white;
+    border: 1.5px solid #e4e4f0;
+    color: #667eea;
+    font-weight: 700;
+    border-radius: 10px;
+    padding: 11px 24px;
+    font-size: 0.85em;
+    cursor: pointer;
+  }
+
+  .orders-list {
+    padding: 14px 16px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .order-card {
+    background: white;
+    border-radius: 12px;
+    padding: 14px 16px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+    cursor: pointer;
+  }
+
+  .order-card-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+  }
+
+  .order-card-id {
+    font-size: 0.82em;
+    font-weight: 800;
+    color: #333;
+  }
+
+  .order-card-bottom {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .order-card-meta {
+    font-size: 0.74em;
+    color: #999;
+  }
+
+  .order-card-amount {
+    font-size: 0.9em;
+    font-weight: 800;
+    color: #333;
+  }
+
+  /* ---------- Shared "under construction" placeholder page ---------- */
+  .coming-soon {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 90px 24px;
+    color: #666;
+  }
+
+  .coming-soon-icon {
+    font-size: 3em;
+    margin-bottom: 16px;
+  }
+
+  .coming-soon-text {
+    font-size: 1em;
+    font-weight: 700;
+  }
+
+  /* ---------- Home page: gradient header (not sticky - the pill nav
+     below it is what "floats" once the header scrolls out of view) ---------- */
+  .home-top {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    padding: 18px 16px 20px;
+  }
+
+  .top-bar-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+
+  .location-and-time {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    min-width: 0;
+  }
+
+  .delivery-time-badge {
+    background: rgba(255,255,255,0.92);
+    color: #667eea;
+    font-size: 0.78em;
+    font-weight: 800;
+    padding: 4px 8px;
+    border-radius: 6px;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .location-selector {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    color: white;
+    font-size: 0.85em;
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .location-selector .location-sub {
+    opacity: 0.85;
+    font-weight: 500;
+  }
+
+  .profile-avatar {
+    width: 34px;
+    height: 34px;
+    border-radius: 6px;
+    background: rgba(255,255,255,0.25);
+    border: 1.5px solid rgba(255,255,255,0.6);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1em;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .cart-icon-btn {
+    position: relative;
+    width: 34px;
+    height: 34px;
+    border-radius: 6px;
+    background: rgba(255,255,255,0.25);
+    border: 1.5px solid rgba(255,255,255,0.6);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1em;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+
+  .cart-badge {
+    position: absolute;
+    top: -6px;
+    right: -6px;
+    background: #e03131;
+    color: white;
+    font-size: 0.6em;
+    font-weight: 800;
+    min-width: 16px;
+    height: 16px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 3px;
+    box-shadow: 0 0 0 2px #667eea;
+  }
+
+  /* ---------- Home page: floating sticky pill nav (Veggies/Fruits/Staples) ---------- */
+  .pill-nav {
+    position: sticky;
+    top: 0;
+    z-index: 9;
+    background: #f6f6fb;
+    display: flex;
+    gap: 10px;
+    padding: 12px 16px;
+    border-bottom: 1px solid #ebebf2;
+  }
+
+  .pill-nav-item {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    background: white;
+    border: 1.5px solid #e4e4f0;
+    border-radius: 20px;
+    padding: 6px 8px;
+    font-size: 0.82em;
+    font-weight: 700;
+    color: #666;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: border-color 0.15s ease, color 0.15s ease;
+  }
+
+  .pill-nav-item img, .pill-nav-item .pill-fallback {
+    width: 26px;
+    height: 26px;
+    border-radius: 4px;
+    object-fit: cover;
+    flex-shrink: 0;
+  }
+
+  .pill-nav-item .pill-fallback {
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.85em;
+    font-weight: 800;
+  }
+
+  .pill-nav-item.active {
+    border-color: #667eea;
+    color: #667eea;
+    background: #f0f0ff;
+  }
+
+  /* ---------- Home page: real tile images (fall back to letter-avatar) ---------- */
+  .tile-image {
+    width: 94px;
+    height: 94px;
+    border-radius: 6px;
+    object-fit: cover;
+    margin: 0 auto 8px;
+    display: block;
+  }
+
+  /* ---------- Bottom navigation (Home + Results pages only) ---------- */
+  .bottom-nav-spacer {
+    height: 64px;
+  }
+
+  .bottom-nav {
+    position: fixed;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 100%;
+    max-width: 430px;
+    background: white;
+    border-top: 1px solid #e8e8f0;
+    display: flex;
+    z-index: 20;
+    box-shadow: 0 -4px 16px rgba(0,0,0,0.08);
+  }
+
+  .bottom-nav-item {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    padding: 9px 4px 10px;
+    background: none;
+    border: none;
+    color: #999;
+    font-size: 0.68em;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .bottom-nav-item .bn-icon {
+    font-size: 1.25em;
+  }
+
+  .bottom-nav-item.active {
+    color: #667eea;
+  }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useCallback, useEffect, useRef, useMemo, useContext, createContext } = React;
+const { BrowserRouter, Routes, Route, useNavigate, useSearchParams, useLocation, useParams, Link } = ReactRouterDOM;
+
+// Persona context - "who's shopping" (see PERSONAS/App() near the
+// bottom of this file). Provided once, at the top of the tree, so any
+// page can read the current persona (mainly persona.id, needed on
+// every cart/order API call) without prop-drilling it through every
+// route.
+const PersonaContext = createContext(null);
+function usePersona() {
+  return useContext(PersonaContext);
+}
+
+// Cart context - a live item count for the header badge, plus a
+// product_id -> quantity map so any product card (PLP or Search
+// Results) can show its OWN quantity as an inline +/- stepper instead
+// of a one-shot "Add" button, kept in sync by calling refresh() after
+// any cart-mutating action (add, change quantity, remove, checkout).
+// Pages that need the full cart with product details (CartPage,
+// CheckoutPage) still fetch /api/cart themselves - this context is
+// just the lightweight "what's the quantity of X" lookup used
+// everywhere else.
+const CartContext = createContext(null);
+function useCart() {
+  return useContext(CartContext);
+}
+
+function CartProvider({ personaId, children }) {
+  const [items, setItems] = useState([]);
+
+  const refresh = useCallback(() => {
+    if (!personaId) return;
+    fetch(`/api/cart?persona_id=${encodeURIComponent(personaId)}`)
+      .then((res) => res.json())
+      .then((data) => setItems(data.items || []))
+      .catch(() => {});
+  }, [personaId]);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  const count = items.reduce((sum, i) => sum + i.quantity, 0);
+  const quantities = useMemo(() => {
+    const map = {};
+    items.forEach((i) => { map[i.product_id] = i.quantity; });
+    return map;
+  }, [items]);
+
+  return (
+    <CartContext.Provider value={{ count, quantities, refresh }}>
+      {children}
+    </CartContext.Provider>
+  );
+}
+
+// Fire-and-forget event logging - never blocks the UI, and a failure here
+// (e.g. backend briefly down) should never break the actual search/browse
+// experience for the customer.
+function logEvent(path, payload) {
+  fetch(`/api/events/${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }).catch(() => {});
+}
+
+// Shared Add-to-Cart control - used by both PLPProductCard and
+// ResultCard so PLP and Search Results behave identically. Reads its
+// own quantity from CartContext; 0 shows a plain "Add" button, >0
+// shows an inline +/- stepper right on the card (no trip to the Cart
+// page needed to see or change how many are already in there).
+// "+" always POSTs (the endpoint already upserts/increments); "-"
+// PATCHes to quantity-1, which the backend already treats as "remove
+// the row" once it hits 0 - no new backend behavior needed for either.
+// `pending` blocks a second tap from firing before the first request's
+// response has been reconciled, so fast double-taps can't race and
+// leave the displayed quantity wrong.
+function AddToCartControl({ productId, inStock, onLogAdd }) {
+  const { persona } = usePersona();
+  const cart = useCart();
+  const [pending, setPending] = useState(false);
+  const quantity = cart.quantities[productId] || 0;
+
+  const increment = (e) => {
+    e.stopPropagation();
+    if (pending) return;
+    setPending(true);
+    fetch("/api/cart/items", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ persona_id: persona.id, product_id: productId, quantity: 1 }),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error("Add to cart failed.");
+        return res.json();
+      })
+      .then(() => {
+        cart.refresh();
+        if (onLogAdd) onLogAdd();
+      })
+      .catch(() => {})
+      .finally(() => setPending(false));
+  };
+
+  const decrement = (e) => {
+    e.stopPropagation();
+    if (pending || quantity <= 0) return;
+    setPending(true);
+    fetch(`/api/cart/items/${encodeURIComponent(productId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ persona_id: persona.id, quantity: quantity - 1 }),
+    })
+      .then((res) => {
+        if (!res.ok) throw new Error("Cart update failed.");
+        return res.json();
+      })
+      .then(() => cart.refresh())
+      .catch(() => {})
+      .finally(() => setPending(false));
+  };
+
+  if (inStock === false) {
+    return <button className="plp-add-btn" disabled>Out of stock</button>;
+  }
+
+  if (quantity > 0) {
+    return (
+      <div className="inline-qty-stepper" onClick={(e) => e.stopPropagation()}>
+        <button onClick={decrement} disabled={pending}>−</button>
+        <span>{quantity}</span>
+        <button onClick={increment} disabled={pending}>+</button>
+      </div>
+    );
+  }
+
+  return (
+    <button className="plp-add-btn" onClick={increment} disabled={pending}>
+      Add
+    </button>
+  );
+}
+
+const SEARCH_TYPES = [
+  {
+    value: "embedding_full",
+    label: "Full Details",
+    caption: "Compares against name + description + brand + category + price + attributes combined. More context, most accurate matches.",
+  },
+  {
+    value: "embedding_name",
+    label: "By Name",
+    caption: "Compares your query against just the product name. Best for short, everyday searches.",
+  },
+  {
+    value: "embedding_category",
+    label: "By Category",
+    caption: "Compares against just the category path. Great for browsing a whole category, but won't rank individual products differently.",
+  },
+];
+
+// Search result card - visually the same family as PLPProductCard (real
+// photo, brand, name, price, real Add to Cart hitting /api/cart/items) so
+// a search result and a category-browse result feel like one app. The two
+// things unique to a *search* result are layered on top of that shared
+// card shape: a rank badge (this product's position in the ranked list)
+// and the ⓘ explain button that opens the cosine-distance breakdown for
+// this result - kept front and center rather than folded away, since
+// showing *why* something ranked where it did is this project's whole
+// point (see ExplainPanel below).
+function ResultCard({ product, query, queryType, onExplain }) {
+  const navigate = useNavigate();
+  const [imgError, setImgError] = useState(false);
+
+  const showImage = product.image_url && !imgError;
+  const organicParsed = parseOrganicName(product.name);
+  const displayName = stripPackSize(organicParsed.displayName, product.pack_size);
+  const isOrganic = organicParsed.isOrganic || product.organic;
+
+  const handleCardClick = () => {
+    logEvent("click", { query_text: query, product_id: product.id, position: product.rank, query_type: queryType });
+    navigate(`/product/${product.id}`);
+  };
+
+  const handleExplainClick = (e) => {
+    e.stopPropagation();
+    onExplain();
+  };
+
+  const logAdd = () => {
+    logEvent("add-to-cart", { query_text: query, product_id: product.id, position: product.rank, query_type: queryType });
+  };
+
+  return (
+    <div className="plp-card result-card" onClick={handleCardClick}>
+      <span className="result-rank-badge">#{product.rank}</span>
+      <button className="result-explain-btn" title="Why this result?" onClick={handleExplainClick}>ⓘ</button>
+      {showImage ? (
+        <img
+          className="plp-card-image"
+          src={product.image_url}
+          alt={displayName}
+          onError={() => setImgError(true)}
+        />
+      ) : (
+        <div className="plp-card-image plp-card-image-fallback">{displayName.charAt(0)}</div>
+      )}
+      <div className="plp-card-brand">
+        {isOrganic ? "🌿 " : ""}{product.brand}
+      </div>
+      <div className="plp-card-name">{displayName}</div>
+      <span className="similarity-badge">{product.similarity}% match</span>
+      <div className="plp-card-price-row">
+        <span className="plp-card-price">₹{product.price}</span>
+        <AddToCartControl productId={product.id} inStock={product.in_stock} onLogAdd={logAdd} />
+      </div>
+    </div>
+  );
+}
+
+function ExplainPanel({ product, previousProduct, query, modeLabel, onClose }) {
+  const distanceDelta = previousProduct
+    ? (product.distance - previousProduct.distance).toFixed(6)
+    : null;
+
+  return (
+    <React.Fragment>
+      <div className="panel-overlay" onClick={onClose}></div>
+      <div className="side-panel">
+        <div className="panel-header">
+          <div className="panel-title">{product.name}</div>
+          <button className="panel-close" onClick={onClose}>✕</button>
+        </div>
+
+        <div className="panel-section">
+          <div className="panel-section-title">How this score was calculated</div>
+          <div className="panel-row"><span>Your query</span><span>"{query}"</span></div>
+          <div className="panel-row"><span>Search mode</span><span>{modeLabel}</span></div>
+          <div className="panel-row"><span>Raw cosine distance</span><span>{product.distance}</span></div>
+          <div className="panel-row"><span>Similarity %</span><span>{product.similarity}%</span></div>
+          <div className="formula-box">
+            similarity % = (1 - cosine_distance) × 100{"\n"}
+            = (1 - {product.distance}) × 100{"\n"}
+            = {product.similarity}%
+          </div>
+          <div className="panel-note">This is the exact text that was converted into a vector and compared against your query:</div>
+          <div className="text-box">{product.embedded_text}</div>
+        </div>
+
+        <div className="panel-section">
+          <div className="panel-section-title">Why this ranks where it does</div>
+          {previousProduct ? (
+            <React.Fragment>
+              <div className="compare-box">
+                <div className="compare-card winner">
+                  <div className="name">#{previousProduct.rank} {previousProduct.name}</div>
+                  <div>{previousProduct.similarity}% · distance {previousProduct.distance}</div>
+                </div>
+                <div className="compare-arrow">›</div>
+                <div className="compare-card">
+                  <div className="name">#{product.rank} {product.name}</div>
+                  <div>{product.similarity}% · distance {product.distance}</div>
+                </div>
+              </div>
+              <div className="panel-note">
+                #{previousProduct.rank} has a smaller cosine distance than #{product.rank} by {distanceDelta} —
+                a smaller distance means its embedded text was geometrically closer to your query's embedding,
+                which is why it's ranked one position higher.
+              </div>
+            </React.Fragment>
+          ) : (
+            <div className="top-result-note">
+              🏆 This is the top-ranked result for "{query}" — no product scored a smaller distance to your query.
+            </div>
+          )}
+        </div>
+      </div>
+    </React.Fragment>
+  );
+}
+
+// ---------------------------------------------------------------
+// Home page - dummy/visual for now: real leaf categories (from
+// /api/categories/leaf), grouped under Vegetables / Fruits / Staples,
+// rendered as a tile grid. Tapping the search bar goes to /search.
+// Tiles are not yet interactive (category-filtered browsing is a
+// separate, not-yet-built feature) - visual only in this phase.
+// ---------------------------------------------------------------
+// A single category tile - shows a real photo (icon_url) when present,
+// falling back to the letter-avatar circle if icon_url is null OR the
+// image itself fails to load (loremflickr placeholders occasionally
+// 404/time out, so this is a real fallback, not just a null-check).
+// Tapping a tile goes to that category's PLP (/category/:id) - every
+// active product filed directly under it.
+function CategoryTile({ cat, navigate }) {
+  const [imgError, setImgError] = useState(false);
+  const showImage = cat.icon_url && !imgError;
+  return (
+    <div className="tile" onClick={() => navigate(`/category/${cat.id}`)}>
+      {showImage ? (
+        <img
+          className="tile-image"
+          src={cat.icon_url}
+          alt={cat.name}
+          onError={() => setImgError(true)}
+        />
+      ) : (
+        <div className="tile-icon">{cat.name.charAt(0)}</div>
+      )}
+      <div className="tile-name">{cat.name}</div>
+    </div>
+  );
+}
+
+// Shared bottom navigation - Home / Orders / Offers / Help & Support.
+// Per product decision, this only appears on the Home page and the
+// Search Results page (not the Search Initiation page, PDP, Cart, or
+// Checkout - those stay fast and task-focused). Orders/Offers/Help
+// aren't built yet, so those three tabs route to a shared "under
+// construction" placeholder page rather than doing nothing on tap.
+function BottomNav({ active, navigate }) {
+  const items = [
+    { key: "home", label: "Home", icon: "🏠", path: "/" },
+    { key: "orders", label: "Orders", icon: "📦", path: "/orders" },
+    { key: "offers", label: "Offers", icon: "🏷️", path: "/coming-soon" },
+    { key: "help", label: "Help & Support", icon: "💬", path: "/coming-soon" },
+  ];
+  return (
+    <div className="bottom-nav">
+      {items.map((item) => (
+        <button
+          key={item.key}
+          className={"bottom-nav-item" + (active === item.key ? " active" : "")}
+          onClick={() => navigate(item.path, { state: { activeKey: item.key } })}
+        >
+          <span className="bn-icon">{item.icon}</span>
+          <span>{item.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// Cart icon with a live item-count badge - shared by every header that
+// needs it (Home, PLP). Reads from CartContext so the badge updates
+// the instant something is added/removed anywhere in the app, not just
+// on this page's own next fetch.
+function CartIconButton({ navigate }) {
+  const cart = useCart();
+  return (
+    <button className="cart-icon-btn" title="Cart" onClick={() => navigate("/cart")}>
+      🛒
+      {cart.count > 0 && <span className="cart-badge">{cart.count > 99 ? "99+" : cart.count}</span>}
+    </button>
+  );
+}
+
+function HomePage() {
+  const navigate = useNavigate();
+  const { persona, switchPersona } = usePersona();
+  const [sections, setSections] = useState(null);
+  const [loadError, setLoadError] = useState(false);
+  const [activeSection, setActiveSection] = useState(null);
+  const sectionRefs = useRef({});
+
+  useEffect(() => {
+    fetch("/api/categories/leaf")
+      .then((res) => res.json())
+      .then((data) => setSections(data.sections || []))
+      .catch(() => setLoadError(true));
+  }, []);
+
+  // Scrollspy: as the customer scrolls manually (not just via pill tap),
+  // keep the pill nav's active/highlighted pill in sync with whichever
+  // section is currently near the top of the viewport.
+  useEffect(() => {
+    if (!sections) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) setActiveSection(entry.target.dataset.sectionName);
+        });
+      },
+      { rootMargin: "-120px 0px -70% 0px", threshold: 0 }
+    );
+    Object.values(sectionRefs.current).forEach((el) => el && observer.observe(el));
+    return () => observer.disconnect();
+  }, [sections]);
+
+  const scrollToSection = (name) => {
+    const el = sectionRefs.current[name];
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const hasSections = sections && sections.some((s) => s.categories.length > 0);
+
+  return (
+    <div className="app-frame">
+      <div className="home-top">
+        <div className="top-bar-row">
+          <button className="location-and-time">
+            <span className="delivery-time-badge">14 mins</span>
+            <span className="location-selector">
+              📍 Deliver to <span className="location-sub">Home - 400001 ⌄</span>
+            </span>
+          </button>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <CartIconButton navigate={navigate} />
+            <button
+              className="profile-avatar"
+              title={persona ? persona.name : "Profile"}
+              style={persona ? { background: persona.color, borderColor: persona.color } : undefined}
+              onClick={() => navigate("/coming-soon")}
+            >
+              {persona ? persona.avatar : "👤"}
+            </button>
+          </div>
+        </div>
+        <button className="fake-search-bar" onClick={() => navigate("/search")}>
+          🔍 Search for milk, dal, rice...
+        </button>
+      </div>
+
+      {hasSections && (
+        <div className="pill-nav">
+          {sections.map((section) => (
+            section.categories.length > 0 && (
+              <div
+                key={section.name}
+                className={"pill-nav-item" + (activeSection === section.name ? " active" : "")}
+                onClick={() => scrollToSection(section.name)}
+              >
+                {section.icon_url ? (
+                  <img src={section.icon_url} alt="" />
+                ) : (
+                  <span className="pill-fallback">{section.name.charAt(0)}</span>
+                )}
+                {section.name}
+              </div>
+            )
+          ))}
+        </div>
+      )}
+
+      {loadError && <div className="home-empty">Couldn't load categories. Is the backend running?</div>}
+      {!loadError && sections === null && <div className="home-loading">Loading categories...</div>}
+
+      {sections && sections.map((section) => (
+        section.categories.length > 0 && (
+          <div
+            className="section-block"
+            key={section.name}
+            data-section-name={section.name}
+            ref={(el) => { sectionRefs.current[section.name] = el; }}
+          >
+            <div className="section-heading">{section.name}</div>
+            <div className="tile-grid">
+              {section.categories.map((cat) => (
+                <CategoryTile cat={cat} navigate={navigate} key={cat.id} />
+              ))}
+            </div>
+          </div>
+        )
+      ))}
+
+      <button className="persona-switch-link" onClick={switchPersona}>
+        Not {persona ? persona.name : "this shopper"}? Switch persona
+      </button>
+      <button className="persona-switch-link" onClick={() => { window.location.href = "/admin"; }}>
+        🧑‍💼 Retailer Admin
+      </button>
+
+      <div className="bottom-nav-spacer" />
+      <BottomNav active="home" navigate={navigate} />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------
+// Search page - opens when the Home page's search bar is tapped.
+// Shows a real, editable search input plus shuffled Popular Search
+// chips. Typing+enter or tapping a chip both jump straight to
+// /results?q=... (per the "one tap, done" decision) and log a
+// 'search' event.
+// ---------------------------------------------------------------
+function shuffle(arr) {
+  const copy = arr.slice();
+  for (let i = copy.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+const AUTO_SUGGEST_DEBOUNCE_MS = 250;
+const AUTO_SUGGEST_MIN_LENGTH = 2;
+
+function SearchPage() {
+  const navigate = useNavigate();
+  const [query, setQuery] = useState("");
+  const [chips, setChips] = useState([]);
+  const [suggestions, setSuggestions] = useState([]);
+  const inputRef = useRef(null);
+  const debounceRef = useRef(null);
+
+  useEffect(() => {
+    fetch("/api/popular-searches")
+      .then((res) => res.json())
+      .then((data) => setChips(shuffle((data.queries || []).map((q) => q.query))))
+      .catch(() => setChips([]));
+    if (inputRef.current) inputRef.current.focus();
+  }, []);
+
+  // As-you-type Auto Suggestion: debounced so we're not hitting the API on
+  // every keystroke. No embedding calls happen here - the backend matches
+  // via Postgres trigram similarity against a precomputed vocabulary, which
+  // is what keeps this fast enough to run per pause-in-typing.
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (query.trim().length < AUTO_SUGGEST_MIN_LENGTH) {
+      setSuggestions([]);
+      return;
+    }
+    debounceRef.current = setTimeout(() => {
+      fetch(`/api/auto-suggest?q=${encodeURIComponent(query.trim())}`)
+        .then((res) => res.json())
+        .then((data) => setSuggestions(data.suggestions || []))
+        .catch(() => setSuggestions([]));
+    }, AUTO_SUGGEST_DEBOUNCE_MS);
+    return () => clearTimeout(debounceRef.current);
+  }, [query]);
+
+  const goToResults = (text, queryType) => {
+    const q = text.trim();
+    if (!q) return;
+    logEvent("search", { query_text: q, query_type: queryType });
+    navigate(`/results?q=${encodeURIComponent(q)}&query_type=${queryType}`);
+  };
+
+  const showingSuggestions = query.trim().length >= AUTO_SUGGEST_MIN_LENGTH && suggestions.length > 0;
+
+  return (
+    <div className="app-frame">
+      <div className="app-top">
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <button className="back-arrow" onClick={() => navigate("/")}>‹</button>
+          <div className="real-search-bar" style={{ flex: 1 }}>
+            <input
+              ref={inputRef}
+              type="text"
+              placeholder="Search for milk, dal, rice..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") goToResults(query, "manual_entered"); }}
+            />
+            <button onClick={() => goToResults(query, "manual_entered")}>Search</button>
+          </div>
+        </div>
+      </div>
+
+      {showingSuggestions ? (
+        <React.Fragment>
+          <div className="popular-label">Suggestions</div>
+          <div className="popular-chip-list">
+            {suggestions.map((s) => (
+              <div key={s} className="popular-chip" onClick={() => goToResults(s, "auto_suggestion_picked")}>{s}</div>
+            ))}
+          </div>
+        </React.Fragment>
+      ) : (
+        <React.Fragment>
+          <div className="popular-label">Popular Searches</div>
+          <div className="popular-chip-list">
+            {chips.map((q) => (
+              <div key={q} className="popular-chip" onClick={() => goToResults(q, "popular_search")}>{q}</div>
+            ))}
+          </div>
+        </React.Fragment>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------
+// Results page - the existing semantic search UI, now reached via
+// /results?q=... instead of being the whole app. Reads the query from
+// the URL and runs it automatically on load.
+// ---------------------------------------------------------------
+function ResultsPage() {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const initialQuery = searchParams.get("q") || "";
+  const initialQueryType = searchParams.get("query_type") || "manual_entered";
+
+  const [query, setQuery] = useState(initialQuery);
+  const [results, setResults] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [searchedFor, setSearchedFor] = useState("");
+  const [searchType, setSearchType] = useState("embedding_full");
+  const [explainIndex, setExplainIndex] = useState(null);
+  // Department/price/attribute filters - reset on every new search since
+  // their option lists (and which chips even show up) are derived from
+  // that search's own result set, not a fixed schema.
+  const [filters, setFilters] = useState(defaultResultFilters());
+  // How this search was initiated - chip tap, typed, or (later) an
+  // auto-suggestion pick. Carried on every event tied to this search so
+  // Popular Search adoption rate is measurable (see Step 5 in the plan doc).
+  const [queryType, setQueryType] = useState(initialQueryType);
+
+  const runSearch = useCallback(async (text, type, opts) => {
+    const q = (text !== undefined ? text : query).trim();
+    const embeddingType = type !== undefined ? type : searchType;
+    // A caller can override query_type (e.g. the Results page's own search
+    // box always means "manual_entered", regardless of how we got here);
+    // otherwise re-runs (search-type toggle) keep the existing one.
+    const effectiveQueryType = (opts && opts.queryType) || queryType;
+    if (!q) return;
+
+    setLoading(true);
+    setError(null);
+    setExplainIndex(null);
+    if (effectiveQueryType !== queryType) setQueryType(effectiveQueryType);
+
+    try {
+      const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&limit=12&type=${embeddingType}`);
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || "Search failed.");
+      }
+
+      setResults(data.results);
+      setSearchedFor(q);
+      setFilters(defaultResultFilters());
+      // Log the search event unless this run came from following a link
+      // that already logged it (e.g. tapping a Popular Search chip).
+      if (!(opts && opts.skipLog)) {
+        logEvent("search", { query_text: q, query_type: effectiveQueryType });
+      }
+      // Impressions log every time results actually render (unlike the
+      // search event above) - a search-type toggle re-run shows a new set
+      // of products even for the same query, and each is its own impression.
+      if (data.results && data.results.length > 0) {
+        logEvent("impressions", {
+          query_text: q,
+          query_type: effectiveQueryType,
+          positions: data.results.map((p) => ({ product_id: p.id, position: p.rank })),
+        });
+      }
+    } catch (err) {
+      setError(err.message || "Something went wrong. Is the backend running?");
+      setResults(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [query, searchType, queryType]);
+
+  useEffect(() => {
+    if (initialQuery) {
+      // The Search page already logged this exact search when it navigated
+      // here - avoid double-logging the same query.
+      runSearch(initialQuery, undefined, { skipLog: true, queryType: initialQueryType });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleManualSearch = () => {
+    runSearch(undefined, undefined, { queryType: "manual_entered" });
+  };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter") handleManualSearch();
+  };
+
+  // Chip options (departments/attributes/price ceiling) come from THIS
+  // search's results, not a fixed schema - recomputed only when the
+  // result set itself changes.
+  const filterMeta = useMemo(() => (results ? buildResultFilterMeta(results) : null), [results]);
+
+  const filteredResults = useMemo(() => {
+    if (!results || !filterMeta) return results;
+    return results.filter((p) => resultPassesFilters(p, filters, filterMeta.maxPrice));
+  }, [results, filters, filterMeta]);
+
+  const filtersActive = resultFiltersActive(filters);
+
+  // Filtering can shift/shrink the visible list out from under an open
+  // explain panel's index - close it rather than risk it pointing at the
+  // wrong (or no) product after a filter tap.
+  useEffect(() => {
+    setExplainIndex(null);
+  }, [filters]);
+
+  return (
+    <div className="app-frame">
+      <div className="app-top">
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <button className="back-arrow" onClick={() => navigate("/")}>‹</button>
+          <div className="real-search-bar" style={{ flex: 1 }}>
+            <input
+              type="text"
+              placeholder="Try 'organic dal', 'basmati rice', 'cold-pressed oil'..."
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={handleKeyDown}
+            />
+            <button onClick={handleManualSearch} disabled={loading}>
+              {loading ? "..." : "Search"}
+            </button>
+          </div>
+          <CartIconButton navigate={navigate} />
+        </div>
+      </div>
+
+      {!error && results && results.length > 0 && filterMeta && (
+        <div className="results-filter-bar">
+          <ResultsFilterBar filters={filters} setFilters={setFilters} filterMeta={filterMeta} />
+        </div>
+      )}
+
+      {searchedFor && !loading && !error && (
+        <div className="results-count-label">
+          {filtersActive && filteredResults
+            ? `${filteredResults.length} of ${results ? results.length : 0} results for "${searchedFor}"`
+            : `${results ? results.length : 0} results for "${searchedFor}"`}
+        </div>
+      )}
+
+      {error && (
+        <div className="error-box">⚠️ {error}</div>
+      )}
+
+      {!error && results && results.length === 0 && (
+        <div className="empty-state">No matching products found. Try a different search.</div>
+      )}
+
+      {!error && results && results.length > 0 && filteredResults && filteredResults.length === 0 && (
+        <div className="empty-state">No results match your filters.</div>
+      )}
+
+      {!error && filteredResults && filteredResults.length > 0 && (
+        <div className="plp-grid">
+          {filteredResults.map((product, idx) => (
+            <ResultCard
+              key={product.id}
+              product={product}
+              query={searchedFor}
+              queryType={queryType}
+              onExplain={() => setExplainIndex(idx)}
+            />
+          ))}
+        </div>
+      )}
+
+      {!results && !error && !loading && (
+        <div className="empty-state">Enter a search above.</div>
+      )}
+
+      {explainIndex !== null && filteredResults && filteredResults[explainIndex] && (
+        <ExplainPanel
+          product={filteredResults[explainIndex]}
+          previousProduct={explainIndex > 0 ? filteredResults[explainIndex - 1] : null}
+          query={searchedFor}
+          modeLabel={SEARCH_TYPES.find((t) => t.value === searchType)?.label || searchType}
+          onClose={() => setExplainIndex(null)}
+        />
+      )}
+
+      <div className="bottom-nav-spacer" />
+      <BottomNav active="results" navigate={navigate} />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------
+// Shared placeholder for pages that don't exist yet (Profile, Orders,
+// Offers, Help & Support) - a real destination to land on rather than
+// a dead tap, with a way back to where the customer came from.
+// ---------------------------------------------------------------
+function ComingSoonPage() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  // Which bottom-nav tab sent the customer here (Orders/Offers/Help),
+  // so it stays highlighted rather than losing all context. Landing
+  // here from the profile icon (not a bottom-nav tab) simply leaves
+  // nothing highlighted.
+  const activeKey = location.state?.activeKey || null;
+  return (
+    <div className="app-frame">
+      <div className="home-top" style={{ paddingBottom: 16 }}>
+        <button className="back-arrow" onClick={() => navigate(-1)}>‹</button>
+      </div>
+      <div className="coming-soon">
+        <div className="coming-soon-icon">🚧</div>
+        <div className="coming-soon-text">This page is under construction.</div>
+      </div>
+
+      <div className="bottom-nav-spacer" />
+      <BottomNav active={activeKey} navigate={navigate} />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------
+// Cart / Checkout / Orders. No bottom nav on Cart or Checkout - per
+// the same product decision that kept it off Search Initiation: these
+// are fast, task-focused pages (get in, get through, get out), not
+// somewhere to keep browsing from.
+// ---------------------------------------------------------------
+function CartRow({ item, onQuantityChange, onRemove }) {
+  const displayName = stripPackSize(parseOrganicName(item.name).displayName, item.pack_size);
+  return (
+    <div className="cart-row">
+      {item.image_url ? (
+        <img className="cart-row-image" src={item.image_url} alt={displayName} />
+      ) : (
+        <div className="cart-row-image cart-row-image-fallback">{displayName.charAt(0)}</div>
+      )}
+      <div className="cart-row-main">
+        <div className="cart-row-brand">{item.brand}</div>
+        <div className="cart-row-name">{displayName}</div>
+        {item.pack_size && <div className="cart-row-pack">{item.pack_size}</div>}
+        <div className="cart-row-bottom">
+          <div className="qty-stepper">
+            <button onClick={() => onQuantityChange(item.product_id, item.quantity - 1)}>−</button>
+            <span>{item.quantity}</span>
+            <button onClick={() => onQuantityChange(item.product_id, item.quantity + 1)}>+</button>
+          </div>
+          <div className="cart-row-price">₹{item.line_total}</div>
+        </div>
+      </div>
+      <button className="cart-row-remove" title="Remove" onClick={() => onRemove(item.product_id)}>✕</button>
+    </div>
+  );
+}
+
+function CartPage() {
+  const navigate = useNavigate();
+  const { persona } = usePersona();
+  const cart = useCart();
+  const [items, setItems] = useState(null);
+  const [subtotal, setSubtotal] = useState(0);
+  const [error, setError] = useState(false);
+
+  const loadCart = useCallback(() => {
+    fetch(`/api/cart?persona_id=${encodeURIComponent(persona.id)}`)
+      .then((res) => res.json())
+      .then((data) => {
+        setItems(data.items || []);
+        setSubtotal(data.subtotal || 0);
+      })
+      .catch(() => setError(true));
+  }, [persona.id]);
+
+  useEffect(() => {
+    loadCart();
+  }, [loadCart]);
+
+  const applyCartResponse = (data) => {
+    setItems(data.items || []);
+    setSubtotal(data.subtotal || 0);
+    cart.refresh();
+  };
+
+  const handleQuantityChange = (productId, quantity) => {
+    fetch(`/api/cart/items/${encodeURIComponent(productId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ persona_id: persona.id, quantity }),
+    })
+      .then((res) => res.json())
+      .then(applyCartResponse)
+      .catch(() => {});
+  };
+
+  const handleRemove = (productId) => {
+    fetch(`/api/cart/items/${encodeURIComponent(productId)}?persona_id=${encodeURIComponent(persona.id)}`, {
+      method: "DELETE",
+    })
+      .then((res) => res.json())
+      .then(applyCartResponse)
+      .catch(() => {});
+  };
+
+  return (
+    <div className="app-frame">
+      <div className="home-top" style={{ paddingBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <button className="back-arrow" onClick={() => navigate(-1)}>‹</button>
+          <h2 style={{ color: "white", fontSize: "1.1em", margin: 0 }}>My Cart</h2>
+        </div>
+      </div>
+
+      {error && <div className="home-empty">Couldn't load your cart. Is the backend running?</div>}
+      {!error && items === null && <div className="home-loading">Loading cart...</div>}
+
+      {!error && items && items.length === 0 && (
+        <div className="cart-empty">
+          <div className="cart-empty-icon">🛒</div>
+          <div className="cart-empty-text">Your cart is empty.</div>
+          <button className="cart-empty-cta" onClick={() => navigate("/")}>Start shopping</button>
+        </div>
+      )}
+
+      {items && items.length > 0 && (
+        <React.Fragment>
+          <div className="cart-list">
+            {items.map((item) => (
+              <CartRow
+                key={item.product_id}
+                item={item}
+                onQuantityChange={handleQuantityChange}
+                onRemove={handleRemove}
+              />
+            ))}
+          </div>
+
+          <div className="cart-checkout-bar-spacer" />
+          <div className="cart-checkout-bar">
+            <div className="cart-checkout-total">
+              <span className="cart-checkout-label">Subtotal</span>
+              <span className="cart-checkout-amount">₹{subtotal}</span>
+            </div>
+            <button className="cart-checkout-btn" onClick={() => navigate("/checkout")}>
+              Proceed to Checkout
+            </button>
+          </div>
+        </React.Fragment>
+      )}
+    </div>
+  );
+}
+
+// Dummy checkout - no payment, no address form, just an order summary
+// and a "Place Order" button. Re-fetches the cart itself (rather than
+// trusting nav state) so landing here directly/refreshing still shows
+// the real current cart.
+function CheckoutPage() {
+  const navigate = useNavigate();
+  const { persona } = usePersona();
+  const cart = useCart();
+  const [items, setItems] = useState(null);
+  const [subtotal, setSubtotal] = useState(0);
+  const [error, setError] = useState(false);
+  const [placing, setPlacing] = useState(false);
+  const [placeError, setPlaceError] = useState(null);
+
+  useEffect(() => {
+    fetch(`/api/cart?persona_id=${encodeURIComponent(persona.id)}`)
+      .then((res) => res.json())
+      .then((data) => {
+        setItems(data.items || []);
+        setSubtotal(data.subtotal || 0);
+      })
+      .catch(() => setError(true));
+  }, [persona.id]);
+
+  const handlePlaceOrder = () => {
+    if (placing) return;
+    setPlacing(true);
+    setPlaceError(null);
+    fetch("/api/checkout", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ persona_id: persona.id }),
+    })
+      .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
+      .then(({ ok, data }) => {
+        if (!ok) throw new Error(data.error || "Checkout failed.");
+        cart.refresh();
+        navigate(`/order/${data.order.id}`, { replace: true, state: { justPlaced: true } });
+      })
+      .catch((err) => {
+        setPlaceError(err.message || "Checkout failed. Please try again.");
+        setPlacing(false);
+      });
+  };
+
+  return (
+    <div className="app-frame">
+      <div className="home-top" style={{ paddingBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <button className="back-arrow" onClick={() => navigate(-1)}>‹</button>
+          <h2 style={{ color: "white", fontSize: "1.1em", margin: 0 }}>Checkout</h2>
+        </div>
+      </div>
+
+      {error && <div className="home-empty">Couldn't load your cart. Is the backend running?</div>}
+      {!error && items === null && <div className="home-loading">Loading...</div>}
+
+      {items && items.length === 0 && (
+        <div className="cart-empty">
+          <div className="cart-empty-icon">🛒</div>
+          <div className="cart-empty-text">Your cart is empty.</div>
+          <button className="cart-empty-cta" onClick={() => navigate("/")}>Start shopping</button>
+        </div>
+      )}
+
+      {items && items.length > 0 && (
+        <React.Fragment>
+          <div className="checkout-section">
+            <div className="checkout-section-title">Delivering to</div>
+            <div className="checkout-delivery-row">
+              <div className="checkout-persona-avatar" style={{ background: persona.color }}>{persona.avatar}</div>
+              <div>
+                <div className="checkout-delivery-name">{persona.name}</div>
+                <div className="checkout-delivery-address">Home - 400001</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="checkout-section">
+            <div className="checkout-section-title">Order summary ({items.length} item{items.length === 1 ? "" : "s"})</div>
+            {items.map((item) => {
+              const displayName = stripPackSize(parseOrganicName(item.name).displayName, item.pack_size);
+              return (
+                <div className="checkout-item-row" key={item.product_id}>
+                  <span className="checkout-item-name">{displayName} × {item.quantity}</span>
+                  <span className="checkout-item-price">₹{item.line_total}</span>
+                </div>
+              );
+            })}
+            <div className="checkout-item-row checkout-total-row">
+              <span>Total</span>
+              <span>₹{subtotal}</span>
+            </div>
+          </div>
+
+          {placeError && <div className="error-box" style={{ margin: "0 16px 12px" }}>⚠️ {placeError}</div>}
+
+          <div className="cart-checkout-bar-spacer" />
+          <div className="cart-checkout-bar">
+            <div className="cart-checkout-total">
+              <span className="cart-checkout-label">To pay</span>
+              <span className="cart-checkout-amount">₹{subtotal}</span>
+            </div>
+            <button className="cart-checkout-btn" onClick={handlePlaceOrder} disabled={placing}>
+              {placing ? "Placing order..." : "Place Order"}
+            </button>
+          </div>
+        </React.Fragment>
+      )}
+    </div>
+  );
+}
+
+// Order detail - doubles as the post-checkout success screen (shows a
+// "placed" banner when reached via CheckoutPage's navigate state) and
+// the plain detail view when reached by tapping an order in OrdersPage.
+// Same data either way (GET /api/orders/:id), just an extra banner.
+function OrderDetailPage() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { orderId } = useParams();
+  const { persona } = usePersona();
+  const [order, setOrder] = useState(null);
+  const [error, setError] = useState(false);
+  const justPlaced = Boolean(location.state?.justPlaced);
+
+  useEffect(() => {
+    fetch(`/api/orders/${encodeURIComponent(orderId)}?persona_id=${encodeURIComponent(persona.id)}`)
+      .then((res) => {
+        if (!res.ok) throw new Error("Order not found.");
+        return res.json();
+      })
+      .then((data) => setOrder(data.order))
+      .catch(() => setError(true));
+  }, [orderId, persona.id]);
+
+  return (
+    <div className="app-frame">
+      <div className="home-top" style={{ paddingBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <button className="back-arrow" onClick={() => navigate("/")}>‹</button>
+          <h2 style={{ color: "white", fontSize: "1.1em", margin: 0 }}>Order Details</h2>
+        </div>
+      </div>
+
+      {error && <div className="home-empty">Couldn't find that order.</div>}
+      {!error && !order && <div className="home-loading">Loading order...</div>}
+
+      {order && (
+        <React.Fragment>
+          {justPlaced && (
+            <div className="order-success-banner">
+              <div className="order-success-icon">🎉</div>
+              <div className="order-success-title">Order placed!</div>
+              <div className="order-success-subtitle">This is a dummy checkout - no real payment was made.</div>
+            </div>
+          )}
+
+          <div className="checkout-section">
+            <div className="order-detail-row">
+              <span>Order ID</span>
+              <span className="order-detail-value">{order.id}</span>
+            </div>
+            <div className="order-detail-row">
+              <span>Status</span>
+              <span className="order-status-badge">{order.status}</span>
+            </div>
+            <div className="order-detail-row">
+              <span>Placed on</span>
+              <span className="order-detail-value">
+                {order.placed_at ? new Date(order.placed_at).toLocaleString() : "-"}
+              </span>
+            </div>
+          </div>
+
+          <div className="checkout-section">
+            <div className="checkout-section-title">Items ({order.items.length})</div>
+            {order.items.map((item) => {
+              const displayName = stripPackSize(parseOrganicName(item.name).displayName, item.pack_size);
+              return (
+                <div className="checkout-item-row" key={item.product_id}>
+                  <span className="checkout-item-name">{displayName} × {item.quantity}</span>
+                  <span className="checkout-item-price">₹{(item.price * item.quantity).toFixed(2)}</span>
+                </div>
+              );
+            })}
+            <div className="checkout-item-row checkout-total-row">
+              <span>Total</span>
+              <span>₹{order.total_amount}</span>
+            </div>
+          </div>
+
+          <div className="order-detail-actions">
+            <button className="cart-empty-cta" onClick={() => navigate("/")}>Continue Shopping</button>
+            <button className="order-detail-secondary-btn" onClick={() => navigate("/orders")}>View All Orders</button>
+          </div>
+
+          <div className="bottom-nav-spacer" />
+          <BottomNav active={null} navigate={navigate} />
+        </React.Fragment>
+      )}
+    </div>
+  );
+}
+
+// Order history - the destination behind the bottom nav's "Orders" tab.
+function OrderCard({ order, navigate }) {
+  const date = order.placed_at ? new Date(order.placed_at) : null;
+  return (
+    <div className="order-card" onClick={() => navigate(`/order/${order.id}`)}>
+      <div className="order-card-top">
+        <span className="order-card-id">{order.id}</span>
+        <span className="order-status-badge">{order.status}</span>
+      </div>
+      <div className="order-card-bottom">
+        <span className="order-card-meta">
+          {date ? date.toLocaleDateString() : "-"} · {order.item_count} item{order.item_count === 1 ? "" : "s"}
+        </span>
+        <span className="order-card-amount">₹{order.total_amount}</span>
+      </div>
+    </div>
+  );
+}
+
+function OrdersPage() {
+  const navigate = useNavigate();
+  const { persona } = usePersona();
+  const [orders, setOrders] = useState(null);
+  const [error, setError] = useState(false);
+
+  useEffect(() => {
+    fetch(`/api/orders?persona_id=${encodeURIComponent(persona.id)}`)
+      .then((res) => res.json())
+      .then((data) => setOrders(data.orders || []))
+      .catch(() => setError(true));
+  }, [persona.id]);
+
+  return (
+    <div className="app-frame">
+      <div className="home-top" style={{ paddingBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <button className="back-arrow" onClick={() => navigate(-1)}>‹</button>
+          <h2 style={{ color: "white", fontSize: "1.1em", margin: 0 }}>My Orders</h2>
+        </div>
+      </div>
+
+      {error && <div className="home-empty">Couldn't load your orders. Is the backend running?</div>}
+      {!error && orders === null && <div className="home-loading">Loading orders...</div>}
+      {orders && orders.length === 0 && (
+        <div className="cart-empty">
+          <div className="cart-empty-icon">📦</div>
+          <div className="cart-empty-text">No orders yet.</div>
+          <button className="cart-empty-cta" onClick={() => navigate("/")}>Start shopping</button>
+        </div>
+      )}
+
+      {orders && orders.length > 0 && (
+        <div className="orders-list">
+          {orders.map((order) => (
+            <OrderCard key={order.id} order={order} navigate={navigate} />
+          ))}
+        </div>
+      )}
+
+      <div className="bottom-nav-spacer" />
+      <BottomNav active="orders" navigate={navigate} />
+    </div>
+  );
+}
+
+// Client-side only, for now: the catalog names organic products with
+// a leading (occasionally trailing) "Organic" word - see the Auto
+// Suggestion recipe work, same convention ("Organic Basmati Rice",
+// "Organic Rice"). Rather than a DB migration, this strips that word
+// out of the displayed name and reports it separately so the card can
+// show a proper "Organic" badge instead. Trying this on whatever real
+// organic products already exist in the catalog before deciding
+// whether it's worth a real is_organic-driven badge everywhere.
+function parseOrganicName(name) {
+  // "Organic" can show up anywhere in the name depending on how the
+  // catalog composed it - leading ("Organic Basmati Rice 1kg"), or
+  // mid-string once a brand comes first ("24 Mantra Organic Toor Dal
+  // 500g") - so match it as a standalone word anywhere, not just at
+  // the start/end, and collapse the resulting double space.
+  if (!/\borganic\b/i.test(name)) {
+    return { displayName: name, isOrganic: false };
+  }
+  const displayName = name
+    .replace(/\s*\borganic\b\s*/i, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return { displayName, isOrganic: true };
+}
+
+// Unlike Organic (a word buried in free-text name parsing), net
+// quantity is a real column - product_attributes.pack_size, e.g.
+// "500g", "1kg" - so this strips the EXACT stored value out of the
+// name rather than guessing via a generic number+unit regex. Matches
+// case-insensitively and tolerates the catalog writing it either way
+// ("500g" vs "500 g"), since names weren't always composed identically
+// to how pack_size itself is stored.
+function stripPackSize(name, packSize) {
+  if (!packSize) return name;
+  const escaped = packSize.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const flexible = escaped.replace(/(\d)\s*([a-zA-Z])/g, "$1\\s*$2");
+  // Also swallow surrounding parentheses/brackets, e.g. "(500g)" - not
+  // just bare "500g" - so removing the value doesn't leave an empty
+  // "()" sitting in the title.
+  const pattern = new RegExp("\\s*[\\(\\[]?\\s*\\b" + flexible + "\\b\\s*[\\)\\]]?", "i");
+  return name
+    .replace(pattern, " ")
+    .replace(/[\(\[]\s*[\)\]]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// ---------------------------------------------------------------
+// PLP product card - shows a real photo when present, falling back to
+// a letter-tile like CategoryTile does. Add to Cart logs an event
+// tagged with the category name (there's no search query behind this
+// view, so query_type is left unset rather than misclassified as one
+// of the search-attribution flows).
+// ---------------------------------------------------------------
+function PLPProductCard({ product, categoryName, position }) {
+  const navigate = useNavigate();
+  const [imgError, setImgError] = useState(false);
+  const showImage = product.image_url && !imgError;
+  const organicParsed = parseOrganicName(product.name);
+  const displayName = stripPackSize(organicParsed.displayName, product.pack_size);
+  const isOrganic = organicParsed.isOrganic;
+
+  const logAdd = () => {
+    logEvent("add-to-cart", { query_text: categoryName, product_id: product.id, position });
+  };
+
+  return (
+    <div className="plp-card" onClick={() => navigate(`/product/${product.id}`)}>
+      {isOrganic && <span className="organic-badge">🌿 Organic</span>}
+      {product.pack_size && <span className="quantity-badge">{product.pack_size}</span>}
+      {showImage ? (
+        <img
+          className="plp-card-image"
+          src={product.image_url}
+          alt={displayName}
+          onError={() => setImgError(true)}
+        />
+      ) : (
+        <div className="plp-card-image plp-card-image-fallback">{displayName.charAt(0)}</div>
+      )}
+      <div className="plp-card-brand">{product.brand}</div>
+      <div className="plp-card-name">{displayName}</div>
+      <div className="plp-card-price-row">
+        <span className="plp-card-price">₹{product.price}</span>
+        <AddToCartControl productId={product.id} inStock={product.in_stock} onLogAdd={logAdd} />
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------
+// PLP - lands here from tapping a category tile on the Home page.
+// One page per SECTION (Veggies/Fruits/Staples): a left rail lists
+// every leaf category in that section, and the right side scrolls
+// CONTINUOUSLY through every one of them, one after another - once one
+// category's products end, the next category's heading and products
+// start right below, same as the Home page's own section list. There's
+// no per-click re-fetch/reload; the whole section's data loads once,
+// and picking a rail item just smooth-scrolls to that category's block
+// already on the page (or jumps there instantly on first load).
+//
+// The rail mirrors the Home page's pill-nav scrollspy pattern one
+// level deeper: an IntersectionObserver keeps the highlighted rail
+// item in sync with whichever category block is currently near the
+// top of the viewport as the customer scrolls, not just on tap.
+//
+// The URL still names the selected LEAF category (/category/:categoryId,
+// same route a Home tile links to) - picking a different rail item
+// updates the URL to that category's id via history.replace (filtering
+// within one page, not navigating to a new one).
+//
+// Two fetches: /api/categories/leaf (lightweight tree, just to work out
+// which section this leaf category belongs to) and
+// /api/sections/:root_id/products (every leaf category in that section,
+// each with its own product list, in one call - not one request per
+// category).
+// ---------------------------------------------------------------
+const DEFAULT_FILTERS = { maxPrice: null, brands: new Set(), organicOnly: false };
+
+function productPassesFilters(product, filters, priceMax) {
+  const effectiveMax = filters.maxPrice ?? priceMax;
+  if (product.price != null && product.price > effectiveMax) return false;
+  if (filters.brands.size > 0 && !filters.brands.has(product.brand)) return false;
+  if (filters.organicOnly && !parseOrganicName(product.name).isOrganic) return false;
+  return true;
+}
+
+// Single horizontal, sticky filter strip at the top of the PLP - three
+// chips, no modal/bottom-sheet:
+//   Price  - opens a small dropdown with the range slider
+//   Brand  - opens a small dropdown with a checkbox list (whatever
+//            brands actually appear in this section) - one chip, not
+//            one chip per brand, so the strip stays a fixed, short row
+//            regardless of how many brands exist
+//   Organic - a plain boolean toggle chip, no dropdown needed
+// Everything applies live as you tap it.
+function PLPFilterBar({ filters, setFilters, priceMax, brandOptions, showOrganic }) {
+  const [priceOpen, setPriceOpen] = useState(false);
+  const [brandOpen, setBrandOpen] = useState(false);
+  const effectiveMax = filters.maxPrice ?? priceMax;
+  const priceActive = filters.maxPrice != null && filters.maxPrice < priceMax;
+  const activeCount = (priceActive ? 1 : 0) + filters.brands.size + (filters.organicOnly ? 1 : 0);
+
+  const toggleBrand = (brand) => {
+    setFilters((f) => {
+      const next = new Set(f.brands);
+      if (next.has(brand)) next.delete(brand); else next.add(brand);
+      return { ...f, brands: next };
+    });
+  };
+
+  return (
+    <div className="plp-filter-strip">
+      <div className="plp-filter-chip-wrap">
+        <button
+          className={"plp-filter-chip" + (priceActive ? " active" : "")}
+          onClick={() => setPriceOpen((v) => !v)}
+        >
+          {priceActive ? `Price: up to ₹${effectiveMax}` : "Price"} ⌄
+        </button>
+        {priceOpen && (
+          <React.Fragment>
+            <div className="plp-filter-scrim" onClick={() => setPriceOpen(false)}></div>
+            <div className="plp-price-dropdown">
+              <div className="plp-price-dropdown-label">Up to ₹{effectiveMax}</div>
+              <input
+                type="range"
+                className="filter-slider"
+                min="0"
+                max={priceMax}
+                value={effectiveMax}
+                onChange={(e) => setFilters((f) => ({ ...f, maxPrice: Number(e.target.value) }))}
+              />
+            </div>
+          </React.Fragment>
+        )}
+      </div>
+
+      {brandOptions.length > 0 && (
+        <div className="plp-filter-chip-wrap">
+          <button
+            className={"plp-filter-chip" + (filters.brands.size > 0 ? " active" : "")}
+            onClick={() => setBrandOpen((v) => !v)}
+          >
+            {filters.brands.size > 0 ? `Brand (${filters.brands.size})` : "Brand"} ⌄
+          </button>
+          {brandOpen && (
+            <React.Fragment>
+              <div className="plp-filter-scrim" onClick={() => setBrandOpen(false)}></div>
+              <div className="plp-price-dropdown plp-brand-dropdown">
+                <div className="plp-price-dropdown-label">Brand</div>
+                <div className="plp-brand-list">
+                  {brandOptions.map(({ brand, count }) => (
+                    <label className="plp-brand-row" key={brand}>
+                      <input
+                        type="checkbox"
+                        checked={filters.brands.has(brand)}
+                        onChange={() => toggleBrand(brand)}
+                      />
+                      {brand} <span className="filter-count">({count})</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </React.Fragment>
+          )}
+        </div>
+      )}
+
+      {showOrganic && (
+        <button
+          className={"plp-filter-chip" + (filters.organicOnly ? " active" : "")}
+          onClick={() => setFilters((f) => ({ ...f, organicOnly: !f.organicOnly }))}
+        >
+          Organic
+        </button>
+      )}
+
+      {activeCount > 0 && (
+        <button className="plp-filter-chip plp-filter-clear" onClick={() => setFilters(DEFAULT_FILTERS)}>
+          Clear ✕
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------
+// Search Results filters - Department (leaf category), Price, and a
+// row of attribute chips (Color/Size/Material/Pack Size/Storage/RAM/
+// Processor/Organic) that only appear when the CURRENT result set
+// actually has values for them. A "rice" search never shows Storage or
+// RAM; a phone search never shows Pack Size - each chip's very presence
+// is computed from what's on screen, not a fixed schema.
+// ---------------------------------------------------------------
+
+// Attributes eligible for a generic checkbox-dropdown chip. Organic is
+// deliberately left out of this list - it's boolean, so it gets its own
+// plain toggle chip (same treatment as the PLP filter bar) instead of a
+// dropdown with a single checkbox in it.
+const RESULT_ATTRIBUTE_DEFS = [
+  { key: "color", label: "Color" },
+  { key: "size", label: "Size" },
+  { key: "material", label: "Material" },
+  { key: "pack_size", label: "Pack Size" },
+  { key: "storage_gb", label: "Storage", suffix: "GB" },
+  { key: "ram_gb", label: "RAM", suffix: "GB" },
+  { key: "processor", label: "Processor" },
+];
+
+// product_attributes.attributes (search.py -> product.custom_attributes)
+// is a free-form JSON blob whose KEYS differ per category - fruits/veg
+// store "prep_type" (whole/peeled/sliced/diced/...), rice and pulses
+// store "variety" and "polish", other categories may have none at all.
+// There's no fixed list to define upfront the way RESULT_ATTRIBUTE_DEFS
+// is for the structured columns - buildResultFilterMeta discovers
+// whatever keys are actually present in the current result set instead,
+// which is what makes a "Preparation" chip show up for a produce search
+// and stay absent for a rice or electronics search.
+const CUSTOM_ATTR_LABEL_OVERRIDES = { prep_type: "Preparation" };
+
+// AI Review Summary's 3 sections - keys match SECTION_KEYS in
+// review_summary_routes.py exactly (that's what the API's "praises"/
+// "criticism"/"neutral" fields are keyed by); titles/icons are a
+// display-only concern that lives here, not the backend, so relabeling
+// them later doesn't touch any Python.
+const SUMMARY_SECTION_DEFS = [
+  { key: "praises", icon: "👍", title: "What Customers Love" },
+  { key: "criticism", icon: "👎", title: "What Could Be Better" },
+  { key: "neutral", icon: "🤔", title: "Mixed Feedback" },
+];
+
+function titleCaseWords(str) {
+  return String(str)
+    .split(/[_\s]+/)
+    .filter(Boolean)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(" ");
+}
+
+function humanizeCustomAttrKey(key) {
+  return CUSTOM_ATTR_LABEL_OVERRIDES[key] || titleCaseWords(key);
+}
+
+function defaultResultFilters() {
+  return { maxPrice: null, departments: new Set(), organicOnly: false, attrs: {} };
+}
+
+function resultFiltersActive(filters) {
+  return (
+    filters.maxPrice != null ||
+    filters.departments.size > 0 ||
+    filters.organicOnly ||
+    Object.values(filters.attrs).some((s) => s && s.size > 0)
+  );
+}
+
+// Derives every filter chip's option list (and whether it should render
+// at all) from the result set currently on screen - departments, the
+// price ceiling, which attributes have at least one value, and the
+// distinct values for each. Recomputed only when the result set itself
+// changes, not on every filter tap.
+function buildResultFilterMeta(results) {
+  const departments = {};
+  const attrCounts = {};
+  RESULT_ATTRIBUTE_DEFS.forEach((d) => { attrCounts[d.key] = {}; });
+  // Keyed by "custom:<jsonKey>" so a custom attribute can never collide
+  // with one of the fixed structured-column keys above.
+  const customAttrCounts = {};
+  const customAttrLabels = {};
+  let anyOrganic = false;
+  let maxPrice = 0;
+
+  results.forEach((p) => {
+    if (p.price != null && p.price > maxPrice) maxPrice = p.price;
+    if (p.organic) anyOrganic = true;
+    if (p.category) {
+      if (!departments[p.category]) {
+        departments[p.category] = { label: p.category.split(" / ").pop(), count: 0 };
+      }
+      departments[p.category].count += 1;
+    }
+    RESULT_ATTRIBUTE_DEFS.forEach((d) => {
+      const raw = p[d.key];
+      if (raw === null || raw === undefined || raw === "") return;
+      const label = d.suffix ? `${raw}${d.suffix}` : String(raw);
+      attrCounts[d.key][label] = (attrCounts[d.key][label] || 0) + 1;
+    });
+    if (p.custom_attributes) {
+      Object.entries(p.custom_attributes).forEach(([jsonKey, raw]) => {
+        if (raw === null || raw === undefined || raw === "") return;
+        const fullKey = "custom:" + jsonKey;
+        if (!customAttrCounts[fullKey]) {
+          customAttrCounts[fullKey] = {};
+          customAttrLabels[fullKey] = humanizeCustomAttrKey(jsonKey);
+        }
+        const label = titleCaseWords(raw);
+        customAttrCounts[fullKey][label] = (customAttrCounts[fullKey][label] || 0) + 1;
+      });
+    }
+  });
+
+  const departmentOptions = Object.entries(departments)
+    .map(([value, { label, count }]) => ({ value, label, count }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+
+  const staticAttributeFilters = RESULT_ATTRIBUTE_DEFS.map((d) => ({
+    key: d.key,
+    label: d.label,
+    options: Object.entries(attrCounts[d.key])
+      .map(([value, count]) => ({ value, count }))
+      .sort((a, b) => a.value.localeCompare(b.value)),
+  })).filter((a) => a.options.length > 0);
+
+  const dynamicAttributeFilters = Object.keys(customAttrCounts)
+    .map((fullKey) => ({
+      key: fullKey,
+      label: customAttrLabels[fullKey],
+      options: Object.entries(customAttrCounts[fullKey])
+        .map(([value, count]) => ({ value, count }))
+        .sort((a, b) => a.value.localeCompare(b.value)),
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+
+  return {
+    departmentOptions,
+    attributeFilters: [...staticAttributeFilters, ...dynamicAttributeFilters],
+    maxPrice: Math.ceil(maxPrice),
+    showOrganic: anyOrganic,
+  };
+}
+
+function resultPassesFilters(product, filters, priceMax) {
+  const effectiveMax = filters.maxPrice ?? priceMax;
+  if (product.price != null && product.price > effectiveMax) return false;
+  if (filters.departments.size > 0 && !filters.departments.has(product.category)) return false;
+  if (filters.organicOnly && !product.organic) return false;
+
+  for (const attr of RESULT_ATTRIBUTE_DEFS) {
+    const selected = filters.attrs[attr.key];
+    if (!selected || selected.size === 0) continue;
+    const raw = product[attr.key];
+    if (raw === null || raw === undefined || raw === "") return false;
+    const label = attr.suffix ? `${raw}${attr.suffix}` : String(raw);
+    if (!selected.has(label)) return false;
+  }
+
+  // Dynamic custom-attribute filters ("custom:prep_type", etc.) - keyed
+  // separately from RESULT_ATTRIBUTE_DEFS since their set of keys isn't
+  // known ahead of time, only discovered per search (see
+  // buildResultFilterMeta).
+  for (const [fullKey, selected] of Object.entries(filters.attrs)) {
+    if (!fullKey.startsWith("custom:") || !selected || selected.size === 0) continue;
+    const jsonKey = fullKey.slice(7);
+    const raw = product.custom_attributes ? product.custom_attributes[jsonKey] : undefined;
+    if (raw === null || raw === undefined || raw === "") return false;
+    if (!selected.has(titleCaseWords(raw))) return false;
+  }
+  return true;
+}
+
+function ResultsFilterBar({ filters, setFilters, filterMeta }) {
+  // Only one dropdown open at a time, keyed by chip - "dept", "price",
+  // or an attribute's key - rather than one boolean per chip, since the
+  // attribute chip list is dynamic (unknown length) per search.
+  const [openKey, setOpenKey] = useState(null);
+  const { departmentOptions, attributeFilters, maxPrice, showOrganic } = filterMeta;
+
+  const effectiveMax = filters.maxPrice ?? maxPrice;
+  const priceActive = filters.maxPrice != null && filters.maxPrice < maxPrice;
+  const activeAttrCount = Object.values(filters.attrs).reduce((sum, s) => sum + (s ? s.size : 0), 0);
+  const activeCount =
+    (priceActive ? 1 : 0) + filters.departments.size + (filters.organicOnly ? 1 : 0) + activeAttrCount;
+
+  const toggleDept = (value) => {
+    setFilters((f) => {
+      const next = new Set(f.departments);
+      if (next.has(value)) next.delete(value); else next.add(value);
+      return { ...f, departments: next };
+    });
+  };
+
+  const toggleAttrValue = (attrKey, value) => {
+    setFilters((f) => {
+      const next = new Set(f.attrs[attrKey] || []);
+      if (next.has(value)) next.delete(value); else next.add(value);
+      return { ...f, attrs: { ...f.attrs, [attrKey]: next } };
+    });
+  };
+
+  return (
+    <div className="plp-filter-strip">
+      {departmentOptions.length > 0 && (
+        <div className="plp-filter-chip-wrap">
+          <button
+            className={"plp-filter-chip" + (filters.departments.size > 0 ? " active" : "")}
+            onClick={() => setOpenKey(openKey === "dept" ? null : "dept")}
+          >
+            {filters.departments.size > 0 ? `Department (${filters.departments.size})` : "Department"} ⌄
+          </button>
+          {openKey === "dept" && (
+            <React.Fragment>
+              <div className="plp-filter-scrim" onClick={() => setOpenKey(null)}></div>
+              <div className="plp-price-dropdown plp-brand-dropdown">
+                <div className="plp-price-dropdown-label">Department</div>
+                <div className="plp-brand-list">
+                  {departmentOptions.map(({ value, label, count }) => (
+                    <label className="plp-brand-row" key={value}>
+                      <input
+                        type="checkbox"
+                        checked={filters.departments.has(value)}
+                        onChange={() => toggleDept(value)}
+                      />
+                      {label} <span className="filter-count">({count})</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            </React.Fragment>
+          )}
+        </div>
+      )}
+
+      <div className="plp-filter-chip-wrap">
+        <button
+          className={"plp-filter-chip" + (priceActive ? " active" : "")}
+          onClick={() => setOpenKey(openKey === "price" ? null : "price")}
+        >
+          {priceActive ? `Price: up to ₹${effectiveMax}` : "Price"} ⌄
+        </button>
+        {openKey === "price" && (
+          <React.Fragment>
+            <div className="plp-filter-scrim" onClick={() => setOpenKey(null)}></div>
+            <div className="plp-price-dropdown">
+              <div className="plp-price-dropdown-label">Up to ₹{effectiveMax}</div>
+              <input
+                type="range"
+                className="filter-slider"
+                min="0"
+                max={maxPrice}
+                value={effectiveMax}
+                onChange={(e) => setFilters((f) => ({ ...f, maxPrice: Number(e.target.value) }))}
+              />
+            </div>
+          </React.Fragment>
+        )}
+      </div>
+
+      {attributeFilters.map((attr) => {
+        const selected = filters.attrs[attr.key] || new Set();
+        return (
+          <div className="plp-filter-chip-wrap" key={attr.key}>
+            <button
+              className={"plp-filter-chip" + (selected.size > 0 ? " active" : "")}
+              onClick={() => setOpenKey(openKey === attr.key ? null : attr.key)}
+            >
+              {selected.size > 0 ? `${attr.label} (${selected.size})` : attr.label} ⌄
+            </button>
+            {openKey === attr.key && (
+              <React.Fragment>
+                <div className="plp-filter-scrim" onClick={() => setOpenKey(null)}></div>
+                <div className="plp-price-dropdown plp-brand-dropdown">
+                  <div className="plp-price-dropdown-label">{attr.label}</div>
+                  <div className="plp-brand-list">
+                    {attr.options.map(({ value, count }) => (
+                      <label className="plp-brand-row" key={value}>
+                        <input
+                          type="checkbox"
+                          checked={selected.has(value)}
+                          onChange={() => toggleAttrValue(attr.key, value)}
+                        />
+                        {value} <span className="filter-count">({count})</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </React.Fragment>
+            )}
+          </div>
+        );
+      })}
+
+      {showOrganic && (
+        <button
+          className={"plp-filter-chip" + (filters.organicOnly ? " active" : "")}
+          onClick={() => setFilters((f) => ({ ...f, organicOnly: !f.organicOnly }))}
+        >
+          Organic
+        </button>
+      )}
+
+      {activeCount > 0 && (
+        <button className="plp-filter-chip plp-filter-clear" onClick={() => setFilters(defaultResultFilters())}>
+          Clear ✕
+        </button>
+      )}
+    </div>
+  );
+}
+
+function PLPPage() {
+  const navigate = useNavigate();
+  const { categoryId } = useParams();
+
+  const [sections, setSections] = useState(null);
+  const [sectionsError, setSectionsError] = useState(false);
+
+  const [sectionData, setSectionData] = useState(null);
+  const [sectionDataError, setSectionDataError] = useState(false);
+
+  const [activeCategoryId, setActiveCategoryId] = useState(categoryId);
+  const categoryRefs = useRef({});
+  const didInitialScroll = useRef(false);
+
+  const [filters, setFilters] = useState(DEFAULT_FILTERS);
+
+  useEffect(() => {
+    fetch("/api/categories/leaf")
+      .then((res) => res.json())
+      .then((data) => setSections(data.sections || []))
+      .catch(() => setSectionsError(true));
+  }, []);
+
+  const currentSection = sections && sections.find((s) => s.categories.some((c) => c.id === categoryId));
+  const rootId = currentSection ? currentSection.root_category_id : null;
+
+  // Loads once per SECTION, not per leaf category - clicking sibling
+  // categories in the rail never re-triggers this.
+  useEffect(() => {
+    if (!rootId) return;
+    setSectionData(null);
+    setSectionDataError(false);
+    setFilters(DEFAULT_FILTERS);
+    didInitialScroll.current = false;
+    fetch(`/api/sections/${rootId}/products`)
+      .then((res) => res.json())
+      .then((data) => setSectionData(data))
+      .catch(() => setSectionDataError(true));
+  }, [rootId]);
+
+  const categoriesWithProducts = sectionData
+    ? sectionData.categories.filter((c) => c.products.length > 0)
+    : null;
+
+  // Filter option ranges/lists are derived from the WHOLE section (not
+  // just the currently-scrolled-to category), since one filter panel
+  // covers the entire continuous-scroll page. Recomputed only when the
+  // underlying product data changes, not on every filter toggle.
+  const { priceMax, brandOptions, showOrganic } = useMemo(() => {
+    if (!categoriesWithProducts) return { priceMax: 0, brandOptions: [], showOrganic: false };
+    const allProducts = categoriesWithProducts.flatMap((c) => c.products);
+    const max = allProducts.reduce((m, p) => (p.price != null && p.price > m ? p.price : m), 0);
+    const brandCounts = {};
+    let anyOrganic = false;
+    allProducts.forEach((p) => {
+      brandCounts[p.brand] = (brandCounts[p.brand] || 0) + 1;
+      if (parseOrganicName(p.name).isOrganic) anyOrganic = true;
+    });
+    const brands = Object.keys(brandCounts)
+      .sort((a, b) => a.localeCompare(b))
+      .map((brand) => ({ brand, count: brandCounts[brand] }));
+    return { priceMax: Math.ceil(max), brandOptions: brands, showOrganic: anyOrganic };
+  }, [categoriesWithProducts]);
+
+  // Every category's products run through the active filters; a
+  // category whose products are all filtered out simply doesn't render
+  // its heading/grid, but the rail on the left is unaffected - it
+  // always lists every leaf category in the section, filters or not.
+  const filteredCategories = categoriesWithProducts
+    ? categoriesWithProducts
+        .map((cat) => ({ ...cat, products: cat.products.filter((p) => productPassesFilters(p, filters, priceMax)) }))
+        .filter((cat) => cat.products.length > 0)
+    : null;
+
+  // Land directly on the tapped category's block - instantly, not
+  // animated - the first time this section's data arrives. Rail clicks
+  // scroll themselves imperatively, so this only needs to run once per
+  // section load, not on every categoryId change.
+  useEffect(() => {
+    if (!categoriesWithProducts || didInitialScroll.current) return;
+    const el = categoryRefs.current[categoryId];
+    if (el) el.scrollIntoView({ behavior: "auto", block: "start" });
+    didInitialScroll.current = true;
+  }, [categoriesWithProducts]);
+
+  // Scrollspy - keep the rail's highlighted item synced with whichever
+  // category block is currently near the top of the viewport as the
+  // customer scrolls manually, not just on rail tap. Re-runs whenever
+  // the FILTERED set changes too, since filtering can remove/restore
+  // category blocks from the DOM.
+  useEffect(() => {
+    if (!filteredCategories) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) setActiveCategoryId(entry.target.dataset.categoryId);
+        });
+      },
+      { rootMargin: "-120px 0px -70% 0px", threshold: 0 }
+    );
+    Object.values(categoryRefs.current).forEach((el) => el && observer.observe(el));
+    return () => observer.disconnect();
+  }, [filteredCategories]);
+
+  const selectCategory = (id) => {
+    setActiveCategoryId(id);
+    navigate(`/category/${id}`, { replace: true });
+    const el = categoryRefs.current[id];
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  return (
+    <div className="app-frame">
+      <div className="home-top" style={{ paddingBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <button className="back-arrow" onClick={() => navigate("/")}>‹</button>
+            <h2 style={{ color: "white", fontSize: "1.1em", margin: 0 }}>
+              {currentSection ? currentSection.name : "Category"}
+            </h2>
+          </div>
+          <CartIconButton navigate={navigate} />
+        </div>
+      </div>
+
+      {categoriesWithProducts && categoriesWithProducts.length > 0 && (
+        <div className="plp-filter-bar">
+          <PLPFilterBar
+            filters={filters}
+            setFilters={setFilters}
+            priceMax={priceMax}
+            brandOptions={brandOptions}
+            showOrganic={showOrganic}
+          />
+        </div>
+      )}
+
+      <div className="plp-body">
+        <div className="plp-sidebar">
+          {sectionsError && <div className="plp-sidebar-empty">⚠️</div>}
+          {!sectionsError && !categoriesWithProducts && <div className="plp-sidebar-empty">Loading...</div>}
+          {categoriesWithProducts && categoriesWithProducts.map((cat) => (
+            <div
+              key={cat.id}
+              className={"plp-sidebar-item" + (cat.id === activeCategoryId ? " active" : "")}
+              onClick={() => selectCategory(cat.id)}
+            >
+              {cat.icon_url ? (
+                <img src={cat.icon_url} alt="" />
+              ) : (
+                <span className="plp-sidebar-fallback">{cat.name.charAt(0)}</span>
+              )}
+              <span className="plp-sidebar-label">{cat.name}</span>
+            </div>
+          ))}
+        </div>
+
+        <div className="plp-main">
+          {sectionDataError && <div className="home-empty">Couldn't load this section. Is the backend running?</div>}
+          {!sectionDataError && !categoriesWithProducts && <div className="home-loading">Loading products...</div>}
+          {categoriesWithProducts && categoriesWithProducts.length === 0 && (
+            <div className="home-empty">No products in this section yet.</div>
+          )}
+          {categoriesWithProducts && categoriesWithProducts.length > 0 && filteredCategories.length === 0 && (
+            <div className="home-empty">No products match your filters.</div>
+          )}
+
+          {filteredCategories && filteredCategories.map((cat) => (
+            <div
+              key={cat.id}
+              data-category-id={cat.id}
+              ref={(el) => { categoryRefs.current[cat.id] = el; }}
+            >
+              <div className="plp-category-heading">{cat.name}</div>
+              <div className="plp-grid">
+                {cat.products.map((product, idx) => (
+                  <PLPProductCard
+                    key={product.id}
+                    product={product}
+                    categoryName={cat.name}
+                    position={idx + 1}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="bottom-nav-spacer" />
+      <BottomNav active={null} navigate={navigate} />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------
+// Persona gate - this is a portfolio demo, not a real storefront, so
+// there's no real login. Instead, the first thing anyone sees is "who
+// are you shopping as" - 6 hand-picked personas standing in for
+// different shopper types. Picking one is purely identity for now
+// (shows up as the profile avatar); it's the groundwork the upcoming
+// cart/checkout work will attribute activity to, not a feature in
+// itself yet. Remembered in localStorage so refreshing doesn't bounce
+// back to the picker.
+// ---------------------------------------------------------------
+const PERSONA_STORAGE_KEY = "discoverai_persona";
+
+const PERSONAS = [
+  { id: "priya", name: "Priya", avatar: "👩‍👧", color: "#f06595", trait: "Busy working mom - weekly big-basket runs, no time to browse" },
+  { id: "arjun", name: "Arjun", avatar: "💪", color: "#20c997", trait: "Fitness enthusiast - organic, high-protein, reads every label" },
+  { id: "ramesh", name: "Ramesh", avatar: "👴", color: "#868e96", trait: "Budget-conscious retiree - sticks to staples, hunts for value" },
+  { id: "sneha", name: "Sneha", avatar: "🎓", color: "#fab005", trait: "College student - quick snacks, instant meals, small basket" },
+  { id: "fatima", name: "Fatima", avatar: "👩‍🍳", color: "#fd7e14", trait: "Home chef - tries new recipes, hunts specialty ingredients" },
+  { id: "vikram", name: "Vikram", avatar: "🍼", color: "#4dabf7", trait: "New parent - baby food and hygiene essentials, stocks up fast" },
+  // Added for Ratings & Reviews testing - one review per (product,
+  // persona), so exercising "10 reviews on one product" needs 10
+  // distinct personas to submit as, not just 10 page reloads.
+  { id: "meera", name: "Meera", avatar: "🧘", color: "#845ef7", trait: "Wellness-focused - clean label, low sugar, mindful eating" },
+  { id: "rohan", name: "Rohan", avatar: "🎮", color: "#22b8cf", trait: "Young professional - convenience food, orders late at night" },
+  { id: "kavita", name: "Kavita", avatar: "👩‍🌾", color: "#94d82d", trait: "Large joint family - bulk staples, value packs, weekly stock-up" },
+  { id: "imran", name: "Imran", avatar: "🚴", color: "#ff922b", trait: "Athlete in training - protein, hydration, recovery snacks" },
+  { id: "ananya", name: "Ananya", avatar: "🎨", color: "#e64980", trait: "Foodie/blogger - photographs everything, tries niche brands" },
+  { id: "suresh", name: "Suresh", avatar: "🧑‍💼", color: "#495057", trait: "Office-goer - grab-and-go breakfast, meal-prep on weekends" },
+  { id: "divya", name: "Divya", avatar: "🤱", color: "#f783ac", trait: "Expecting mother - careful about ingredients, avoids additives" },
+  { id: "karan", name: "Karan", avatar: "🍕", color: "#fa5252", trait: "Bachelor living alone - instant food, small pack sizes" },
+  { id: "leela", name: "Leela", avatar: "👵", color: "#adb5bd", trait: "Traditional cook - whole spices, regional staples, no shortcuts" },
+  { id: "farhan", name: "Farhan", avatar: "🏋️", color: "#15aabf", trait: "Gym owner - buys in bulk for the gym cafe, price-sensitive" },
+];
+
+function loadStoredPersona() {
+  try {
+    const raw = localStorage.getItem(PERSONA_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return PERSONAS.find((p) => p.id === parsed.id) || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function storePersona(persona) {
+  try {
+    localStorage.setItem(PERSONA_STORAGE_KEY, JSON.stringify({ id: persona.id }));
+  } catch (e) {
+    // localStorage unavailable (private browsing, etc.) - persona just
+    // won't survive a refresh; not worth failing the selection over.
+  }
+}
+
+function clearStoredPersona() {
+  try {
+    localStorage.removeItem(PERSONA_STORAGE_KEY);
+  } catch (e) {
+    // Nothing to clean up if storage was never usable in the first place.
+  }
+}
+
+// The TRUE landing page (see App()) - the very first screen, before
+// either experience this portfolio demonstrates has been chosen.
+// Exactly two cards, no third option: Storefront (the customer-facing
+// app, persona-gated - see PersonaSelectPage below) and Retailer Admin
+// (a separate, ungated experience at /admin - see RetailerAdminPage).
+// Clicking Storefront doesn't navigate anywhere - it just tells App()
+// to stop showing this page and move on to persona selection, all
+// within the same page load. Clicking Retailer Admin is a real
+// navigation, since /admin is its own ungated route.
+function LandingPage({ onEnterStorefront }) {
+  return (
+    <div className="app-frame">
+      <div className="home-top" style={{ textAlign: "center", padding: "40px 20px 28px" }}>
+        <div className="persona-select-title">DiscoverAI</div>
+        <div className="persona-select-subtitle">
+          A portfolio demo grocery marketplace. Choose which side of the app you want to see.
+        </div>
+      </div>
+      <div className="landing-hero-cards">
+        <button className="landing-hero-card" onClick={onEnterStorefront}>
+          <div className="landing-hero-icon">🛍️</div>
+          <div className="landing-hero-body">
+            <div className="landing-hero-label">Storefront</div>
+            <div className="landing-hero-caption">The e-commerce site - browse, search, and shop as a customer.</div>
+          </div>
+          <div className="landing-hero-arrow">→</div>
+        </button>
+        <button className="landing-hero-card" onClick={() => { window.location.href = "/admin"; }}>
+          <div className="landing-hero-icon">🧑‍💼</div>
+          <div className="landing-hero-body">
+            <div className="landing-hero-label">Retailer Admin</div>
+            <div className="landing-hero-caption">Manage the catalog, moderate reviews, and run the AI tools.</div>
+          </div>
+          <div className="landing-hero-arrow">→</div>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Reached after clicking Storefront on the true landing page above (or
+// directly, via a deep link with no persona chosen yet - see App()).
+// onBack returns to LandingPage; it's a no-op if you arrived via a deep
+// link rather than through Storefront, since there's nowhere "back" to
+// go in that case other than this same page.
+function PersonaSelectPage({ onSelect, onBack }) {
+  return (
+    <div className="app-frame">
+      <div className="home-top persona-select-header">
+        <button className="back-arrow" onClick={onBack}>‹</button>
+        <div className="persona-select-title">Who's shopping today?</div>
+        <div className="persona-select-subtitle">
+          This is a portfolio demo, not a real store - pick a shopper persona to browse DiscoverAI as.
+        </div>
+      </div>
+      <div className="persona-grid">
+        {PERSONAS.map((p) => (
+          <button
+            key={p.id}
+            className="persona-card"
+            style={{ "--persona-color": p.color }}
+            onClick={() => onSelect(p)}
+          >
+            <div className="persona-avatar">{p.avatar}</div>
+            <div className="persona-name">{p.name}</div>
+            <div className="persona-trait">{p.trait}</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Compact card for the PDP's "You may also like" horizontal scroller -
+// same visual family as PLPProductCard/ResultCard (real photo, brand,
+// name, price, real Add to Cart), just without the category/rank
+// chrome those need, since this scroller can show a lot of cards.
+function RelatedProductCard({ product }) {
+  const navigate = useNavigate();
+  const [imgError, setImgError] = useState(false);
+  const showImage = product.image_url && !imgError;
+  const organicParsed = parseOrganicName(product.name);
+  const displayName = stripPackSize(organicParsed.displayName, product.pack_size);
+
+  const logAdd = () => {
+    logEvent("add-to-cart", { query_text: "pdp-related", product_id: product.id });
+  };
+
+  return (
+    <div className="pdp-related-card" onClick={() => navigate(`/product/${product.id}`)}>
+      {showImage ? (
+        <img
+          className="plp-card-image"
+          src={product.image_url}
+          alt={displayName}
+          onError={() => setImgError(true)}
+        />
+      ) : (
+        <div className="plp-card-image plp-card-image-fallback">{displayName.charAt(0)}</div>
+      )}
+      <div className="plp-card-brand">{product.brand}</div>
+      <div className="plp-card-name">{displayName}</div>
+      <div className="plp-card-price-row">
+        <span className="plp-card-price">₹{product.price}</span>
+        <AddToCartControl productId={product.id} inStock={product.in_stock} onLogAdd={logAdd} />
+      </div>
+    </div>
+  );
+}
+
+// 1-5 star input for the review form - click a star to set the rating;
+// stars fill up to whichever is higher, the committed value or the
+// one currently being hovered.
+function StarPicker({ value, onChange }) {
+  const [hover, setHover] = useState(0);
+  const display = hover || value;
+  return (
+    <div className="star-picker">
+      {[1, 2, 3, 4, 5].map((n) => (
+        <button
+          key={n}
+          type="button"
+          className={"star-picker-btn" + (n <= display ? " filled" : "")}
+          onMouseEnter={() => setHover(n)}
+          onMouseLeave={() => setHover(0)}
+          onClick={() => onChange(n)}
+        >
+          ★
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// Rate & Review form - mirrors the exact rules reviews_routes.py's
+// submit_review() enforces server-side, so the UI never lets a
+// shopper hit a validation error that wasn't already visible here:
+// rating is always required; a rating of 3 or below requires review
+// text (a "reason"); anything WITH text goes to moderation, a pure
+// rating (no text) is approved instantly. One review per persona per
+// product - resubmitting overwrites the previous one (see the
+// ON CONFLICT upsert in submit_review()), so this form doesn't need
+// to know whether the shopper already reviewed this product.
+// Product decision (matches reviews_routes.py's MAX_IMAGES/MAX_TOTAL_IMAGE_BYTES
+// exactly - keep these two in sync): up to 5 photos per review, 5MB
+// COMBINED, not per-image.
+const MAX_REVIEW_IMAGES = 5;
+const MAX_REVIEW_IMAGES_BYTES = 5 * 1024 * 1024;
+
+function ReviewForm({ productId, onSubmitted }) {
+  const { persona } = usePersona();
+  const [rating, setRating] = useState(0);
+  const [reviewText, setReviewText] = useState("");
+  const [images, setImages] = useState([]); // File[]
+  const [imageError, setImageError] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [result, setResult] = useState(null); // { status } | { error }
+
+  // One object URL per selected file, for the thumbnail previews - built
+  // once per `images` change (not on every render) and revoked on
+  // cleanup so picking/removing photos repeatedly doesn't leak memory.
+  const previewUrls = useMemo(() => images.map((f) => URL.createObjectURL(f)), [images]);
+  useEffect(() => {
+    return () => { previewUrls.forEach((u) => URL.revokeObjectURL(u)); };
+  }, [previewUrls]);
+
+  const reasonRequired = rating > 0 && rating <= 3;
+  const totalImageBytes = images.reduce((sum, f) => sum + f.size, 0);
+  const canSubmit = rating > 0 && !submitting && (!reasonRequired || reviewText.trim().length > 0);
+
+  const handleFilesSelected = (e) => {
+    const picked = Array.from(e.target.files || []);
+    e.target.value = ""; // lets the same file be re-picked later if removed
+    if (picked.length === 0) return;
+
+    const combined = [...images, ...picked];
+    if (combined.length > MAX_REVIEW_IMAGES) {
+      setImageError(`You can attach up to ${MAX_REVIEW_IMAGES} photos.`);
+      return;
+    }
+    const combinedBytes = combined.reduce((sum, f) => sum + f.size, 0);
+    if (combinedBytes > MAX_REVIEW_IMAGES_BYTES) {
+      setImageError("Photos must be 5MB or less combined.");
+      return;
+    }
+    setImageError(null);
+    setImages(combined);
+  };
+
+  const removeImage = (index) => {
+    setImageError(null);
+    setImages((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (!canSubmit) return;
+    setSubmitting(true);
+    setResult(null);
+
+    // multipart/form-data (not JSON) so the photos can ride along in the
+    // same request - see reviews_routes.py's submit_review().
+    const formData = new FormData();
+    formData.append("persona_id", persona.id);
+    formData.append("rating", String(rating));
+    if (reviewText.trim()) formData.append("review_text", reviewText.trim());
+    images.forEach((file) => formData.append("images", file));
+
+    fetch(`/api/products/${encodeURIComponent(productId)}/reviews`, {
+      method: "POST",
+      body: formData,
+    })
+      .then((res) => res.json().then((body) => ({ ok: res.ok, body })))
+      .then(({ ok, body }) => {
+        if (!ok) {
+          setResult({ error: body.error || "Couldn't submit your review." });
+          return;
+        }
+        setResult({ status: body.review.status });
+        setRating(0);
+        setReviewText("");
+        setImages([]);
+        if (onSubmitted) onSubmitted();
+      })
+      .catch(() => setResult({ error: "Couldn't submit your review. Please try again." }))
+      .finally(() => setSubmitting(false));
+  };
+
+  return (
+    <div className="pdp-section pdp-review-form">
+      <div className="checkout-section-title">Rate this product</div>
+      <form onSubmit={handleSubmit}>
+        <StarPicker value={rating} onChange={(n) => { setRating(n); setResult(null); }} />
+
+        {rating > 0 && (
+          <React.Fragment>
+            <textarea
+              className="pdp-review-textarea"
+              placeholder={
+                reasonRequired
+                  ? "A rating of 3 stars or below needs a reason - what went wrong?"
+                  : "Add a written review (optional)"
+              }
+              value={reviewText}
+              onChange={(e) => setReviewText(e.target.value)}
+              rows={3}
+            />
+
+            <div className="pdp-review-photo-row">
+              {images.map((file, i) => (
+                <div className="pdp-review-photo-thumb" key={i}>
+                  <img src={previewUrls[i]} alt={`Photo ${i + 1}`} />
+                  <button type="button" className="pdp-review-photo-remove" onClick={() => removeImage(i)}>
+                    ×
+                  </button>
+                </div>
+              ))}
+              {images.length < MAX_REVIEW_IMAGES && (
+                <label className="pdp-review-photo-add">
+                  📷
+                  <input type="file" accept="image/*" multiple hidden onChange={handleFilesSelected} />
+                </label>
+              )}
+            </div>
+            <div className="pdp-review-photo-hint">
+              Up to {MAX_REVIEW_IMAGES} photos, 5MB combined
+              {images.length > 0 ? ` (${(totalImageBytes / (1024 * 1024)).toFixed(1)}MB used)` : ""}.
+            </div>
+            {imageError && <div className="pdp-review-hint">{imageError}</div>}
+          </React.Fragment>
+        )}
+        {reasonRequired && (
+          <div className="pdp-review-hint">A reason is required for a rating of 3 stars or below.</div>
+        )}
+
+        {result && result.error && <div className="pdp-review-error">{result.error}</div>}
+        {result && result.status === "approved" && (
+          <div className="pdp-review-success">Thanks! Your rating is live.</div>
+        )}
+        {result && result.status === "submitted" && (
+          <div className="pdp-review-success">
+            Thanks! Your review is awaiting moderation and will appear once approved.
+          </div>
+        )}
+
+        <button type="submit" className="plp-add-btn pdp-review-submit" disabled={!canSubmit}>
+          {submitting ? "Submitting..." : "Submit"}
+        </button>
+      </form>
+    </div>
+  );
+}
+
+// One approved, written review on the PDP - persona name/avatar looked
+// up client-side from PERSONAS (reviews are stored by persona_id only,
+// same "no real user auth" model already used by cart/orders).
+function ReviewCard({ review }) {
+  const author = PERSONAS.find((p) => p.id === review.persona_id);
+  const date = review.created_at ? new Date(review.created_at).toLocaleDateString() : "";
+  const images = review.images || [];
+  return (
+    <div className="pdp-review-card">
+      <div className="pdp-review-card-top">
+        <span className="pdp-review-author">{author ? `${author.avatar} ${author.name}` : "Shopper"}</span>
+        <span className="pdp-review-stars">
+          {"★".repeat(review.rating)}{"☆".repeat(5 - review.rating)}
+        </span>
+      </div>
+      <p className="pdp-review-text">{review.review_text}</p>
+      {images.length > 0 && (
+        <div className="pdp-review-image-row">
+          {images.map((img) => (
+            <a href={img.image_url} target="_blank" rel="noreferrer" key={img.id}>
+              <img className="pdp-review-image-thumb" src={img.image_url} alt="Review photo" />
+            </a>
+          ))}
+        </div>
+      )}
+      {date && <div className="pdp-review-date">{date}</div>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------
+// Product Detail Page - lands here from tapping any product card
+// anywhere in the app (Home/PLP/Search Results all link the same way,
+// via /product/:productId - see PLPProductCard's and ResultCard's
+// onClick). Built from fields already proven out elsewhere: image_url
+// + fallback (PLPProductCard), organic/pack-size parsing
+// (parseOrganicName/stripPackSize), the dynamic attribute-labeling
+// helper built for the Search Results filter bar
+// (humanizeCustomAttrKey - so a value like prep_type shows the same
+// "Preparation" label here as it does there), and the real Add to Cart
+// control (AddToCartControl). Backed by GET /api/products/:id, which
+// also returns a handful of related products from the same leaf
+// category so browsing doesn't dead-end on this page.
+// ---------------------------------------------------------------
+function ProductDetailPage() {
+  const navigate = useNavigate();
+  const { productId } = useParams();
+  const [data, setData] = useState(null);
+  const [error, setError] = useState(false);
+  const [imgError, setImgError] = useState(false);
+
+  const loadProduct = useCallback(() => {
+    fetch(`/api/products/${encodeURIComponent(productId)}`)
+      .then((res) => {
+        if (!res.ok) throw new Error("Product not found.");
+        return res.json();
+      })
+      .then((d) => setData(d))
+      .catch(() => setError(true));
+  }, [productId]);
+
+  useEffect(() => {
+    setData(null);
+    setError(false);
+    setImgError(false);
+    window.scrollTo(0, 0);
+    loadProduct();
+  }, [productId]);
+
+  const product = data && data.product;
+  const related = (data && data.related_products) || [];
+  const reviewsList = (data && data.reviews) || [];
+  const ratingSummary = data && data.rating_summary;
+  const reviewSummary = data && data.review_summary; // {praises, criticism, neutral} or null
+
+  const organicParsed = product ? parseOrganicName(product.name) : null;
+  const displayName = product ? stripPackSize(organicParsed.displayName, product.pack_size) : "";
+  const isOrganic = product ? (organicParsed.isOrganic || product.organic) : false;
+  const showImage = product && product.image_url && !imgError;
+
+  // Same idea as Search Results' dynamic filter chips (RESULT_ATTRIBUTE_DEFS),
+  // plus whatever's in the free-form custom_attributes JSON - so a fact
+  // shown as a filter chip elsewhere in the app also shows up here as a
+  // labeled spec row.
+  const specRows = [];
+  if (product) {
+    if (product.pack_size) specRows.push(["Pack Size", product.pack_size]);
+    if (product.color) specRows.push(["Color", product.color]);
+    if (product.size) specRows.push(["Size", product.size]);
+    if (product.material) specRows.push(["Material", product.material]);
+    if (product.fit_type) specRows.push(["Fit", product.fit_type]);
+    if (product.storage_gb) specRows.push(["Storage", `${product.storage_gb}GB`]);
+    if (product.ram_gb) specRows.push(["RAM", `${product.ram_gb}GB`]);
+    if (product.processor) specRows.push(["Processor", product.processor]);
+    if (product.display_size_inch) specRows.push(["Display", `${product.display_size_inch}"`]);
+    if (product.connectivity_5g) specRows.push(["Connectivity", "5G"]);
+    Object.entries(product.custom_attributes || {}).forEach(([key, value]) => {
+      if (value === null || value === undefined || value === "") return;
+      specRows.push([humanizeCustomAttrKey(key), String(value)]);
+    });
+  }
+
+  return (
+    <div className="app-frame">
+      <div className="app-top" style={{ paddingBottom: 16 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <button className="back-arrow" onClick={() => navigate(-1)}>‹</button>
+            <h2 style={{ color: "white", fontSize: "1.1em", margin: 0 }}>Product Details</h2>
+          </div>
+          <CartIconButton navigate={navigate} />
+        </div>
+      </div>
+
+      {error && <div className="home-empty">Couldn't find that product.</div>}
+      {!error && !product && <div className="home-loading">Loading product...</div>}
+
+      {product && (
+        <React.Fragment>
+          {product.category && product.category.path && (
+            <div className="pdp-breadcrumb">{product.category.path}</div>
+          )}
+
+          {showImage ? (
+            <img
+              className="pdp-hero-image"
+              src={product.image_url}
+              alt={displayName}
+              onError={() => setImgError(true)}
+            />
+          ) : (
+            <div className="pdp-hero-image pdp-hero-image-fallback">{displayName.charAt(0)}</div>
+          )}
+
+          <div className="pdp-info">
+            {isOrganic && <span className="organic-badge pdp-organic-badge">🌿 Organic</span>}
+            <div className="plp-card-brand">{product.brand}</div>
+            <h1 className="pdp-title">{displayName}</h1>
+
+            {ratingSummary && ratingSummary.count > 0 ? (
+              <div className="pdp-rating-row">
+                <span className="pdp-rating">★ {ratingSummary.average.toFixed(1)}</span>
+                <span className="pdp-review-count">
+                  ({ratingSummary.count} rating{ratingSummary.count === 1 ? "" : "s"})
+                </span>
+              </div>
+            ) : (
+              <div className="pdp-rating-row">
+                <span className="pdp-review-count">No ratings yet - be the first to rate this product.</span>
+              </div>
+            )}
+
+            <div className="pdp-price-row">
+              <span className="pdp-price">₹{product.price}</span>
+              {product.original_price && product.original_price > product.price && (
+                <span className="pdp-original-price">₹{product.original_price}</span>
+              )}
+              {product.discount_percentage > 0 && (
+                <span className="pdp-discount-badge">{product.discount_percentage}% OFF</span>
+              )}
+            </div>
+
+            <div className={"pdp-stock-line" + (product.in_stock ? "" : " out")}>
+              {product.in_stock ? "In stock" : "Out of stock"}
+            </div>
+
+            <div className="pdp-add-row">
+              <AddToCartControl
+                productId={product.id}
+                inStock={product.in_stock}
+                onLogAdd={() => logEvent("add-to-cart", { query_text: "pdp", product_id: product.id })}
+              />
+            </div>
+
+            {product.description && (
+              <div className="pdp-section">
+                <div className="checkout-section-title">Description</div>
+                <p className="pdp-description">{product.description}</p>
+              </div>
+            )}
+
+            {specRows.length > 0 && (
+              <div className="pdp-section">
+                <div className="checkout-section-title">Specifications</div>
+                <div className="pdp-spec-table">
+                  {specRows.map(([label, value]) => (
+                    <div className="pdp-spec-row" key={label}>
+                      <span className="pdp-spec-label">{label}</span>
+                      <span className="pdp-spec-value">{value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <ReviewForm productId={product.id} onSubmitted={loadProduct} />
+          </div>
+
+          {reviewSummary && (
+            <div className="pdp-section pdp-related-section pdp-ai-summary">
+              <div className="checkout-section-title" style={{ padding: "0 16px" }}>
+                ✨ What customers are saying
+              </div>
+              {SUMMARY_SECTION_DEFS.map((def) => (
+                reviewSummary[def.key] ? (
+                  <div className="pdp-ai-summary-block" key={def.key}>
+                    <div className="pdp-ai-summary-heading">{def.icon} {def.title}</div>
+                    <p className="pdp-ai-summary-text">{reviewSummary[def.key]}</p>
+                  </div>
+                ) : null
+              ))}
+            </div>
+          )}
+
+          {reviewsList.length > 0 && (
+            <div className="pdp-section pdp-related-section">
+              <div className="checkout-section-title" style={{ padding: "0 16px" }}>Customer Reviews</div>
+              <div className="pdp-review-list">
+                {reviewsList.map((r) => (
+                  <ReviewCard key={r.id} review={r} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {related.length > 0 && (
+            <div className="pdp-section pdp-related-section">
+              <div className="checkout-section-title" style={{ padding: "0 16px" }}>You may also like</div>
+              <div className="pdp-related-scroll">
+                {related.map((p) => (
+                  <RelatedProductCard key={p.id} product={p} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="bottom-nav-spacer" />
+        </React.Fragment>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------
+// Retailer Admin - the second "app" this portfolio demonstrates,
+// alongside the customer-facing Storefront. Reachable directly at
+// /admin (bookmarkable/shareable on its own, no persona needed - this
+// is a portfolio demo, not a real multi-tenant app with real admin
+// auth) and one tap away from the landing page's switcher. Placeholder
+// for now: this establishes the entry point and the module list a
+// real admin would have (Inventory/Orders/Catalog/Analytics) up
+// front, so building out any one of them later is additive, not a
+// restructure.
+// ---------------------------------------------------------------
+// Review Moderation is the first real (non-placeholder) admin module -
+// it has a `path` and renders as a clickable card; the rest are still
+// static "coming soon" cards (no `path`) until they're built out.
+const ADMIN_MODULES = [
+  { icon: "📦", label: "Inventory", caption: "Stock levels, restock alerts" },
+  { icon: "🧾", label: "Orders", caption: "Incoming orders, fulfillment" },
+  { icon: "🗂️", label: "Catalog", caption: "Products, categories, pricing" },
+  { icon: "⭐", label: "Review Moderation", caption: "Approve or reject customer reviews", path: "/admin/reviews" },
+  { icon: "✨", label: "Review Summary (AI)", caption: "Generate & publish an AI review summary", path: "/admin/review-summary" },
+  { icon: "📊", label: "Analytics", caption: "Sales, search, conversion" },
+];
+
+function RetailerAdminPage() {
+  return (
+    <div className="app-frame">
+      <div className="home-top" style={{ paddingBottom: 20 }}>
+        <button className="back-arrow" onClick={() => { window.location.href = "/"; }}>‹</button>
+        <div className="persona-select-title" style={{ textAlign: "left", marginTop: 10 }}>Retailer Admin</div>
+        <div className="persona-select-subtitle" style={{ textAlign: "left" }}>
+          Manage the DiscoverAI storefront - inventory, orders, and catalog.
+        </div>
+      </div>
+
+      <div className="admin-module-grid">
+        {ADMIN_MODULES.map((m) => (
+          m.path ? (
+            <button
+              className="admin-module-card admin-module-card-active"
+              key={m.label}
+              onClick={() => { window.location.href = m.path; }}
+            >
+              <div className="admin-module-icon">{m.icon}</div>
+              <div className="admin-module-label">{m.label}</div>
+              <div className="admin-module-caption">{m.caption}</div>
+            </button>
+          ) : (
+            <div className="admin-module-card" key={m.label}>
+              <div className="admin-module-icon">{m.icon}</div>
+              <div className="admin-module-label">{m.label}</div>
+              <div className="admin-module-caption">{m.caption}</div>
+            </div>
+          )
+        ))}
+      </div>
+
+      <div className="coming-soon" style={{ padding: "20px 24px 40px" }}>
+        <div className="coming-soon-icon">🚧</div>
+        <div className="coming-soon-text">The rest of Retailer Admin is under construction - more modules are coming next.</div>
+      </div>
+
+      <div className="order-detail-actions">
+        <button className="cart-empty-cta" onClick={() => { window.location.href = "/"; }}>
+          Back to Storefront
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------
+// Review Moderation - the Retailer Admin side of the Ratings & Reviews
+// module (see reviews_routes.py). Reachable at /admin/reviews, same
+// ungated pattern as /admin itself (see App() below - checked via the
+// raw URL, no persona/router needed). Three tabs mirror the review
+// lifecycle exactly: Submitted (awaiting a decision - the actual
+// queue), Approved, Rejected. Only a Submitted review has
+// Approve/Reject actions; Approved/Rejected are read-only history.
+// Rejecting requires picking one of the three fixed reasons product
+// asked for - there's no free-text rejection, so every rejection is
+// consistently categorized for later analysis.
+// ---------------------------------------------------------------
+// Live "how this works" popup for AI Moderation - same pattern as the
+// Review Summary one (see ReviewSummaryFlowDiagram/runFlowAnimated
+// above): a separate BroadcastChannel so this doesn't cross-talk with
+// that other feature's channel, a static step diagram, and helpers that
+// light up a step in real time as an actual Run AI Moderation /
+// Evaluate AI Accuracy click happens - not a separate simulated replay.
+const MODERATION_FLOW_CHANNEL = "moderation-flow";
+
+function broadcastModerationFlowStep(step) {
+  if (typeof BroadcastChannel === "undefined") return;
+  try {
+    const bc = new BroadcastChannel(MODERATION_FLOW_CHANNEL);
+    bc.postMessage({ step });
+    bc.close();
+  } catch (e) {
+    // ignore - purely a nice-to-have visualization, never block the real action
+  }
+}
+
+function runModerationFlowAnimated(fetchPromise) {
+  broadcastModerationFlowStep(0);
+  const toFlask = setTimeout(() => broadcastModerationFlowStep(1), 200);
+  const toAgents = setTimeout(() => broadcastModerationFlowStep(2), 550);
+  return fetchPromise.finally(() => {
+    clearTimeout(toFlask);
+    clearTimeout(toAgents);
+    broadcastModerationFlowStep(3);
+    setTimeout(() => broadcastModerationFlowStep(null), 1800);
+  });
+}
+
+const MODERATION_FLOW_STEPS = [
+  {
+    icon: "🖥️",
+    title: "1. Frontend (Review Moderation page)",
+    points: [
+      "You click Run AI Moderation / Re-run on one review, Run AI Moderation Now for the Submitted queue, or Evaluate AI Accuracy for Approved + Rejected.",
+      "The browser sends the review id (or nothing, for a batch run) to the Flask API and waits.",
+      "Once Flask responds, it renders the AI Moderation badge, note, and (for a batch) the result summary.",
+    ],
+  },
+  {
+    icon: "🐍",
+    title: "2. Flask API (moderation_routes.py)",
+    points: [
+      "Loads the review's product name, star rating, review text, and any attached photos.",
+      "Checks recent order history for Velocity/Fraud - this one is pure SQL, no OpenAI call at all.",
+      "Dispatches the remaining agents together for this review, not one after another.",
+    ],
+  },
+  {
+    icon: "🤖",
+    title: "3. OpenAI API (gpt-4o-mini) - up to 3 calls",
+    points: [
+      "Text Moderation: one call covering profanity, relevance, spam, and personal info together.",
+      "Hate Speech: its own separate call - kept isolated so tuning it can't quietly shift the other categories.",
+      "Image Policy: only if the review has photos attached - a vision call checking the actual images.",
+    ],
+  },
+  {
+    icon: "💾",
+    title: "4. Back in Flask, once every agent responds",
+    points: [
+      "Combines every verdict using a fixed priority order (hate speech first, then profanity, personal info, image policy, spam, relevance).",
+      "Saves the decision, reason, note, confidence, AND the full raw trace from every agent - nothing is discarded.",
+      "Sends the result back to the browser, which renders it as the AI Moderation badge.",
+    ],
+  },
+];
+
+function ModerationFlowDiagram({ activeStep }) {
+  return (
+    <div className="rs-flow">
+      {MODERATION_FLOW_STEPS.map((step, i) => (
+        <React.Fragment key={step.title}>
+          <div className={"rs-flow-step" + (activeStep === i ? " rs-flow-step-active" : "")}>
+            <div className="rs-flow-icon">{step.icon}</div>
+            <div className="rs-flow-body">
+              <div className="rs-flow-title">{step.title}</div>
+              <ul className="rs-flow-points">
+                {step.points.map((p) => <li key={p}>{p}</li>)}
+              </ul>
+            </div>
+          </div>
+          {i < MODERATION_FLOW_STEPS.length - 1 && <div className="rs-flow-arrow">↓</div>}
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+// Standalone page for /admin/reviews/how-it-works - opened in a separate
+// popup window (see the "Show how this works" button in
+// ReviewModerationPage) so it can stay open side-by-side while you
+// actually click around the moderation queue.
+function ModerationFlowPage() {
+  const [activeStep, setActiveStep] = useState(null);
+
+  useEffect(() => {
+    if (typeof BroadcastChannel === "undefined") return undefined;
+    const bc = new BroadcastChannel(MODERATION_FLOW_CHANNEL);
+    bc.onmessage = (event) => {
+      const step = event && event.data ? event.data.step : null;
+      setActiveStep(typeof step === "number" ? step : null);
+    };
+    return () => bc.close();
+  }, []);
+
+  return (
+    <div className="app-frame">
+      <div className="home-top" style={{ paddingBottom: 16 }}>
+        <div className="persona-select-title" style={{ textAlign: "left", marginTop: 10 }}>
+          How AI Moderation works
+        </div>
+        <div className="persona-select-subtitle" style={{ textAlign: "left" }}>
+          {activeStep === null
+            ? "Waiting for you to click Run AI Moderation on the review page..."
+            : `Live: step ${activeStep + 1} of ${MODERATION_FLOW_STEPS.length} is happening right now.`}
+        </div>
+      </div>
+      <div className="admin-review-list">
+        <div className="admin-review-card">
+          <ModerationFlowDiagram activeStep={activeStep} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const REVIEW_TABS = [
+  { key: "submitted", label: "Submitted" },
+  { key: "approved", label: "Approved" },
+  { key: "rejected", label: "Rejected" },
+];
+
+const REJECTION_REASONS = [
+  { value: "profanity", label: "Profanity or abusive language" },
+  { value: "hate_speech", label: "Hate speech or discrimination" },
+  { value: "not_relevant", label: "Not relevant to this product (delivery/other product issue)" },
+  { value: "needs_human_review", label: "Suggest further human review" },
+  { value: "spam", label: "Spam / fake or incentivized review" },
+  { value: "personal_info", label: "Contains personal or contact information" },
+  { value: "image_policy", label: "Photo doesn't meet our image guidelines" },
+  { value: "other", label: "Other" },
+];
+
+function AdminReviewCard({ review, onApprove, onReject, onResubmit, onRunAi, onAcceptAi }) {
+  const [rejecting, setRejecting] = useState(false);
+  const [reason, setReason] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
+
+  const isOther = reason === "other";
+  const canConfirmReject = reason && (!isOther || note.trim().length > 0) && !busy;
+
+  const submitReject = () => {
+    if (!canConfirmReject) return;
+    setBusy(true);
+    onReject(review.id, reason, isOther ? note.trim() : null).finally(() => setBusy(false));
+  };
+
+  const handleResubmit = () => {
+    if (busy) return;
+    setBusy(true);
+    onResubmit(review.id).finally(() => setBusy(false));
+  };
+
+  const handleRunAi = () => {
+    if (aiBusy) return;
+    setAiBusy(true);
+    onRunAi(review.id).finally(() => setAiBusy(false));
+  };
+
+  const handleAcceptAi = () => {
+    if (aiBusy) return;
+    setAiBusy(true);
+    onAcceptAi(review.id).finally(() => setAiBusy(false));
+  };
+
+  return (
+    <div className="admin-review-card">
+      <div className="admin-review-card-top">
+        {review.product_image_url ? (
+          <img className="admin-review-thumb" src={review.product_image_url} alt={review.product_name} />
+        ) : (
+          <div className="admin-review-thumb admin-review-thumb-fallback">
+            {(review.product_name || "?").charAt(0)}
+          </div>
+        )}
+        <div className="admin-review-meta">
+          <div className="admin-review-product">{review.product_name}</div>
+          <div className="admin-review-persona">
+            {(PERSONAS.find((p) => p.id === review.persona_id) || {}).name || review.persona_id}
+            {" · "}
+            {review.created_at ? new Date(review.created_at).toLocaleDateString() : ""}
+          </div>
+        </div>
+        <span className="pdp-review-stars">
+          {"★".repeat(review.rating)}{"☆".repeat(5 - review.rating)}
+        </span>
+      </div>
+
+      <p className="admin-review-text">
+        {review.review_text || <em>(No written review - rating only)</em>}
+      </p>
+
+      {(review.images || []).length > 0 && (
+        <div className="pdp-review-image-row">
+          {review.images.map((img) => (
+            <a href={img.image_url} target="_blank" rel="noreferrer" key={img.id}>
+              <img className="pdp-review-image-thumb" src={img.image_url} alt="Review photo" />
+            </a>
+          ))}
+        </div>
+      )}
+
+      {review.ai_decision && (
+        <div className={"ai-mod-badge " + (review.ai_decision === "approved" ? "ai-mod-badge-approved" : "ai-mod-badge-rejected")}>
+          <div className="ai-mod-badge-title">
+            🤖 AI Moderation: {review.ai_decision === "approved"
+              ? "Approved"
+              : `Rejected — ${review.ai_rejection_reason_label || review.ai_rejection_reason}`}
+          </div>
+          {review.ai_decision === "rejected" && review.ai_note && (
+            <div className="ai-mod-badge-note">{review.ai_note}</div>
+          )}
+        </div>
+      )}
+
+      {review.status === "rejected" && review.rejection_reason_label && (
+        <div className="admin-review-rejection-tag">
+          Rejected: {review.rejection_reason_label}
+          {review.rejection_note ? ` - ${review.rejection_note}` : ""}
+        </div>
+      )}
+
+      {(review.status === "approved" || review.status === "rejected") && (
+        <div className="admin-review-actions">
+          {(review.moderator_agreed === true || review.moderator_agreed === false) && (
+            <span className={"ai-agree-tag " + (review.moderator_agreed ? "ai-agree-tag-yes" : "ai-agree-tag-no")}>
+              {review.moderator_agreed ? "✓ You agreed with AI" : "✗ You overrode AI"}
+            </span>
+          )}
+          <button className="admin-resubmit-btn" disabled={busy} onClick={handleResubmit}>
+            {busy ? "Sending..." : "Send to Moderation again"}
+          </button>
+        </div>
+      )}
+
+      {review.status === "submitted" && !rejecting && (
+        <div className="admin-review-actions">
+          {review.ai_decision && (
+            <button className="admin-approve-btn" disabled={aiBusy} onClick={handleAcceptAi}>
+              {aiBusy ? "..." : "Accept AI Decision"}
+            </button>
+          )}
+          <button className="admin-approve-btn" onClick={() => onApprove(review.id)}>Approve</button>
+          <button className="admin-reject-btn" onClick={() => setRejecting(true)}>Reject</button>
+          <button className="admin-resubmit-btn" disabled={aiBusy} onClick={handleRunAi}>
+            {aiBusy ? "Running..." : review.ai_decision ? "Re-run AI Moderation" : "Run AI Moderation"}
+          </button>
+        </div>
+      )}
+
+      {review.status === "submitted" && rejecting && (
+        <div className="admin-reject-panel">
+          {REJECTION_REASONS.map((r) => (
+            <label className="admin-reject-reason" key={r.value}>
+              <input
+                type="radio"
+                name={`reject-${review.id}`}
+                value={r.value}
+                checked={reason === r.value}
+                onChange={() => setReason(r.value)}
+              />
+              {r.label}
+            </label>
+          ))}
+          {isOther && (
+            <textarea
+              className="pdp-review-textarea"
+              placeholder="Describe the reason - required for Other"
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              rows={2}
+            />
+          )}
+          <div className="admin-review-actions">
+            <button className="admin-reject-btn" disabled={!canConfirmReject} onClick={submitReject}>
+              {busy ? "Rejecting..." : "Confirm Reject"}
+            </button>
+            <button
+              className="admin-cancel-btn"
+              onClick={() => { setRejecting(false); setReason(""); setNote(""); }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReviewModerationPage() {
+  const [tab, setTab] = useState("submitted");
+  const [reviewsList, setReviewsList] = useState(null);
+  const [error, setError] = useState(false);
+  const [batchAiBusy, setBatchAiBusy] = useState(false);
+  const [batchAiResult, setBatchAiResult] = useState(null);
+  const [forceRerunSubmitted, setForceRerunSubmitted] = useState(false);
+  const [evalBusy, setEvalBusy] = useState(false);
+  const [evalResult, setEvalResult] = useState(null);
+
+  const load = useCallback(() => {
+    setReviewsList(null);
+    setError(false);
+    fetch(`/api/admin/reviews?status=${encodeURIComponent(tab)}`)
+      .then((res) => {
+        if (!res.ok) throw new Error("Failed to load reviews.");
+        return res.json();
+      })
+      .then((data) => setReviewsList(data.reviews || []))
+      .catch(() => setError(true));
+  }, [tab]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const handleApprove = (reviewId) =>
+    fetch(`/api/admin/reviews/${encodeURIComponent(reviewId)}/approve`, { method: "POST" })
+      .then(() => load());
+
+  const handleReject = (reviewId, reason, note) =>
+    fetch(`/api/admin/reviews/${encodeURIComponent(reviewId)}/reject`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason, note }),
+    }).then(() => load());
+
+  const handleResubmit = (reviewId) =>
+    fetch(`/api/admin/reviews/${encodeURIComponent(reviewId)}/resubmit`, { method: "POST" })
+      .then(() => load());
+
+  const handleRunAi = (reviewId) =>
+    runModerationFlowAnimated(fetch(`/api/admin/reviews/${encodeURIComponent(reviewId)}/moderate`, { method: "POST" }))
+      .then((res) => res.json().then((body) => ({ ok: res.ok, body })))
+      .then(({ ok, body }) => {
+        if (!ok) throw new Error(body.error || "AI moderation failed.");
+        return load();
+      });
+
+  const handleAcceptAi = (reviewId) =>
+    fetch(`/api/admin/reviews/${encodeURIComponent(reviewId)}/accept-ai`, { method: "POST" })
+      .then(() => load());
+
+  const handleRunAiBatch = () => {
+    setBatchAiBusy(true);
+    setBatchAiResult(null);
+    runModerationFlowAnimated(fetch("/api/admin/reviews/moderate-batch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ force: forceRerunSubmitted }),
+    }))
+      .then((res) => res.json())
+      .then((body) => { setBatchAiResult(body); load(); })
+      .catch(() => setBatchAiResult({ error: "AI moderation batch failed to run." }))
+      .finally(() => setBatchAiBusy(false));
+  };
+
+  const handleEvaluateDecided = () => {
+    setEvalBusy(true);
+    setEvalResult(null);
+    runModerationFlowAnimated(fetch("/api/admin/reviews/evaluate-decided", { method: "POST" }))
+      .then((res) => res.json())
+      .then((body) => { setEvalResult(body); load(); })
+      .catch(() => setEvalResult({ error: "Accuracy evaluation failed to run." }))
+      .finally(() => setEvalBusy(false));
+  };
+
+  const handleShowModerationFlow = () =>
+    window.open(
+      "/admin/reviews/how-it-works",
+      "moderationHowItWorks",
+      "width=480,height=760,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes"
+    );
+
+  // CTA only shows on the Submitted tab, and only once there's at least
+  // one submitted review to run it against.
+  const showRunAiCta = tab === "submitted" && reviewsList && reviewsList.length > 0;
+
+  // Accuracy eval covers ALL approved + rejected reviews together
+  // server-side (not just whichever of the two tabs is open), so it's
+  // offered on both - not gated on the current tab's list being non-empty,
+  // since the OTHER of the two statuses may still have reviews to evaluate.
+  const showEvaluateCta = tab === "approved" || tab === "rejected";
+
+  return (
+    <div className="app-frame">
+      <div className="home-top" style={{ paddingBottom: 16 }}>
+        <button className="back-arrow" onClick={() => { window.location.href = "/admin"; }}>‹</button>
+        <div className="persona-select-title" style={{ textAlign: "left", marginTop: 10 }}>Review Moderation</div>
+        <div className="persona-select-subtitle" style={{ textAlign: "left" }}>
+          Approve or reject customer reviews before they show up on the storefront.
+        </div>
+        <button
+          className="admin-resubmit-btn"
+          style={{ marginTop: 10, background: "rgba(255,255,255,0.9)" }}
+          onClick={handleShowModerationFlow}
+        >
+          Show how AI Moderation works ℹ️ (opens in new window)
+        </button>
+      </div>
+
+      <div className="admin-review-tabs">
+        {REVIEW_TABS.map((t) => (
+          <button
+            key={t.key}
+            className={"admin-review-tab" + (tab === t.key ? " active" : "")}
+            onClick={() => setTab(t.key)}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {showRunAiCta && (
+        <div className="ai-run-cta-row">
+          <button className="ai-run-cta-btn" disabled={batchAiBusy} onClick={handleRunAiBatch}>
+            {batchAiBusy ? "Running AI Moderation..." : "🤖 Run AI Moderation Now"}
+          </button>
+          <label className="ai-force-rerun-label">
+            <input
+              type="checkbox"
+              checked={forceRerunSubmitted}
+              onChange={(e) => setForceRerunSubmitted(e.target.checked)}
+            />
+            Also re-run ones already AI-moderated
+          </label>
+          {batchAiResult && (
+            batchAiResult.error ? (
+              <div className="ai-run-cta-result ai-run-cta-result-error">{batchAiResult.error}</div>
+            ) : (
+              <div className="ai-run-cta-result">
+                Moderated {batchAiResult.moderated} of {batchAiResult.candidates_found}
+                {batchAiResult.failed > 0 ? ` (${batchAiResult.failed} failed)` : ""}.
+              </div>
+            )
+          )}
+        </div>
+      )}
+
+      {showEvaluateCta && (
+        <div className="ai-run-cta-row">
+          <button className="ai-run-cta-btn" disabled={evalBusy} onClick={handleEvaluateDecided}>
+            {evalBusy ? "Evaluating..." : "📊 Evaluate AI Accuracy (all Approved + Rejected)"}
+          </button>
+          {evalResult && (
+            evalResult.error ? (
+              <div className="ai-run-cta-result ai-run-cta-result-error">{evalResult.error}</div>
+            ) : (
+              <div className="ai-run-cta-result">
+                Evaluated {evalResult.evaluated} of {evalResult.candidates_found}
+                {evalResult.failed > 0 ? ` (${evalResult.failed} failed)` : ""}
+                {evalResult.accuracy_pct !== null && evalResult.accuracy_pct !== undefined
+                  ? ` — accuracy ${evalResult.accuracy_pct}% (${evalResult.agreed} agreed, ${evalResult.disagreed} disagreed).`
+                  : "."}
+              </div>
+            )
+          )}
+        </div>
+      )}
+
+      {error && <div className="home-empty">Couldn't load reviews. Is the backend running?</div>}
+      {!error && reviewsList === null && <div className="home-loading">Loading reviews...</div>}
+      {reviewsList && reviewsList.length === 0 && (
+        <div className="cart-empty">
+          <div className="cart-empty-icon">⭐</div>
+          <div className="cart-empty-text">No {tab} reviews.</div>
+        </div>
+      )}
+
+      {reviewsList && reviewsList.length > 0 && (
+        <div className="admin-review-list">
+          {reviewsList.map((r) => (
+            <AdminReviewCard
+              key={r.id}
+              review={r}
+              onApprove={handleApprove}
+              onReject={handleReject}
+              onResubmit={handleResubmit}
+              onRunAi={handleRunAi}
+              onAcceptAi={handleAcceptAi}
+            />
+          ))}
+        </div>
+      )}
+
+      <div className="bottom-nav-spacer" />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------
+// AI Review Summary tool - Retailer Admin, reachable at
+// /admin/review-summary (see App() below - same ungated-by-persona
+// pattern as /admin and /admin/reviews). There's no product-browsing
+// UI in admin yet (Catalog is still a placeholder module - see
+// ADMIN_MODULES), so this is a simple "type a product id, look it up"
+// tool rather than a picker - matches how this whole feature has been
+// tested against specific product ids (e.g. prod_985) throughout.
+//
+// Draft/publish design (agreed before building): Generate always
+// writes to draft_text only - it never touches what's currently live
+// (published_text) on the PDP. A moderator reviews/edits the draft,
+// then explicitly hits Publish to make it live, or Unpublish to pull a
+// live summary down without losing the draft underneath it.
+// ---------------------------------------------------------------
+// Pictogram of the Generate flow, step by step, so a moderator can see
+// what happens between clicking the button and text showing up - what
+// runs in the browser, what Flask does, what OpenAI does, and what
+// happens with OpenAI's response. Collapsed by default (toggled from
+// the page header) so it doesn't compete with the actual tool.
+const REVIEW_SUMMARY_FLOW_STEPS = [
+  {
+    icon: "🖥️",
+    title: "1. Frontend (this page, in your browser)",
+    points: [
+      "You click Generate / Save / Generate Review Summaries.",
+      "The browser sends the product id (and edited text, if saving) to the Flask API.",
+      "It waits, then renders whatever Flask sends back into the draft box and \"Live on PDP\" section.",
+    ],
+  },
+  {
+    icon: "🐍",
+    title: "2. Flask API (review_summary_routes.py)",
+    points: [
+      "Reads that product's APPROVED, written reviews from Postgres (rejected reviews and pure star ratings with no text are excluded).",
+      "Checks eligibility - 5+ reviews for a first-time summary, or 3+ new ones since the last summary for the batch tool.",
+      "Builds a prompt: the product name + each review's rating and text.",
+    ],
+  },
+  {
+    icon: "🤖",
+    title: "3. OpenAI API (gpt-4o-mini)",
+    points: [
+      "Receives that prompt over the network - it never touches your database directly.",
+      "Synthesizes a short, balanced paragraph covering common praise AND common complaints, proportional to how often they appear.",
+      "Sends the generated text back to Flask as its response.",
+    ],
+  },
+  {
+    icon: "💾",
+    title: "4. Back in Flask, once OpenAI responds",
+    points: [
+      "Saves the text to Postgres as BOTH draft_text and published_text (auto-publish), plus generated_at/published_at timestamps.",
+      "Sends the saved summary back to the browser as JSON.",
+      "From then on, the PDP reads published_text directly on its own next load - no extra OpenAI call per customer visit.",
+    ],
+  },
+];
+
+// Live flow: the tool page (ReviewSummaryToolPage) and the popup
+// (ReviewSummaryFlowPage) are two separate windows, so they can't share
+// React state directly. BroadcastChannel lets one post "step N is active
+// right now" and the other listen, even across windows/tabs on the same
+// origin. If a browser doesn't support it (very rare today), the calls
+// below are no-ops and the popup just shows the static diagram.
+const REVIEW_SUMMARY_FLOW_CHANNEL = "review-summary-flow";
+
+function broadcastFlowStep(step) {
+  if (typeof BroadcastChannel === "undefined") return;
+  try {
+    const bc = new BroadcastChannel(REVIEW_SUMMARY_FLOW_CHANNEL);
+    bc.postMessage({ step });
+    bc.close();
+  } catch (e) {
+    // ignore - purely a nice-to-have visualization, never block the real action
+  }
+}
+
+// Wraps a real fetch() promise so the popup lights up in step with it:
+// step 0 the instant the click happens, step 1/2 while the request is
+// actually in flight to Flask/OpenAI (we can't see inside that black box
+// without streaming progress from the server, so both stay lit for the
+// real waiting period), step 3 the moment the real response comes back,
+// then it clears itself a couple seconds later.
+function runFlowAnimated(fetchPromise) {
+  broadcastFlowStep(0);
+  const toFlask = setTimeout(() => broadcastFlowStep(1), 250);
+  const toOpenAI = setTimeout(() => broadcastFlowStep(2), 700);
+  return fetchPromise.finally(() => {
+    clearTimeout(toFlask);
+    clearTimeout(toOpenAI);
+    broadcastFlowStep(3);
+    setTimeout(() => broadcastFlowStep(null), 1800);
+  });
+}
+
+function ReviewSummaryFlowDiagram({ activeStep }) {
+  return (
+    <div className="rs-flow">
+      {REVIEW_SUMMARY_FLOW_STEPS.map((step, i) => (
+        <React.Fragment key={step.title}>
+          <div className={"rs-flow-step" + (activeStep === i ? " rs-flow-step-active" : "")}>
+            <div className="rs-flow-icon">{step.icon}</div>
+            <div className="rs-flow-body">
+              <div className="rs-flow-title">{step.title}</div>
+              <ul className="rs-flow-points">
+                {step.points.map((p) => <li key={p}>{p}</li>)}
+              </ul>
+            </div>
+          </div>
+          {i < REVIEW_SUMMARY_FLOW_STEPS.length - 1 && <div className="rs-flow-arrow">↓</div>}
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+// Standalone page for /admin/review-summary/how-it-works - opened in a
+// separate popup window (see the "Show how this works" button below) so a
+// moderator can keep it open side-by-side while working the tool page,
+// rather than it pushing the tool's own content down when toggled inline.
+function ReviewSummaryFlowPage() {
+  const [activeStep, setActiveStep] = useState(null);
+
+  useEffect(() => {
+    if (typeof BroadcastChannel === "undefined") return undefined;
+    const bc = new BroadcastChannel(REVIEW_SUMMARY_FLOW_CHANNEL);
+    bc.onmessage = (event) => {
+      const step = event && event.data ? event.data.step : null;
+      setActiveStep(typeof step === "number" ? step : null);
+    };
+    return () => bc.close();
+  }, []);
+
+  return (
+    <div className="app-frame">
+      <div className="home-top" style={{ paddingBottom: 16 }}>
+        <div className="persona-select-title" style={{ textAlign: "left", marginTop: 10 }}>
+          How the AI Review Summary works
+        </div>
+        <div className="persona-select-subtitle" style={{ textAlign: "left" }}>
+          {activeStep === null
+            ? "Waiting for you to click Generate / Save / Generate Review Summaries on the tool page..."
+            : `Live: step ${activeStep + 1} of ${REVIEW_SUMMARY_FLOW_STEPS.length} is happening right now.`}
+        </div>
+      </div>
+      <div className="admin-review-list">
+        <div className="admin-review-card">
+          <ReviewSummaryFlowDiagram activeStep={activeStep} />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const EMPTY_SUMMARY_SECTIONS = { praises: "", criticism: "", neutral: "" };
+
+function ReviewSummaryToolPage() {
+  const [productIdInput, setProductIdInput] = useState("");
+  const [loadedProductId, setLoadedProductId] = useState(null);
+  const [data, setData] = useState(null); // { product, eligible_review_count, min_reviews_required, eligible, summary }
+  const [sections, setSections] = useState(EMPTY_SUMMARY_SECTIONS); // editable draft, keyed by SUMMARY_SECTION_DEFS
+  const [error, setError] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchResult, setBatchResult] = useState(null);
+
+  const load = useCallback((productId) => {
+    setError(null);
+    setData(null);
+    fetch(`/api/admin/products/${encodeURIComponent(productId)}/review-summary`)
+      .then((res) => {
+        if (!res.ok) throw new Error(res.status === 404 ? "Product not found." : "Failed to load.");
+        return res.json();
+      })
+      .then((d) => {
+        setData(d);
+        setSections((d.summary && d.summary.draft) || EMPTY_SUMMARY_SECTIONS);
+      })
+      .catch((e) => setError(e.message || "Something went wrong."));
+  }, []);
+
+  const handleLookup = (e) => {
+    e.preventDefault();
+    const productId = productIdInput.trim();
+    if (!productId) return;
+    setLoadedProductId(productId);
+    load(productId);
+  };
+
+  const runAction = (promise) => {
+    setBusy(true);
+    setError(null);
+    return promise
+      .then((res) => res.json().then((body) => ({ ok: res.ok, body })))
+      .then(({ ok, body }) => {
+        if (!ok) {
+          setError(body.error || "Something went wrong.");
+          return;
+        }
+        setData((prev) => ({ ...prev, summary: body.summary }));
+        setSections(body.summary.draft || EMPTY_SUMMARY_SECTIONS);
+      })
+      .catch(() => setError("Something went wrong. Please try again."))
+      .finally(() => setBusy(false));
+  };
+
+  // Generate and Save both auto-publish server-side now (see
+  // review_summary_routes.py) - there's no separate confirm-and-publish
+  // step in this flow anymore. Publish/Unpublish still exist as an
+  // escape hatch below (e.g. pulling a summary down, or bringing the
+  // current draft back live after doing so).
+  const handleGenerate = () =>
+    runAction(runFlowAnimated(fetch(`/api/admin/products/${encodeURIComponent(loadedProductId)}/review-summary/generate`, {
+      method: "POST",
+    }))).then(() => load(loadedProductId)); // refresh eligible_review_count too
+
+  const handleSave = () =>
+    runAction(fetch(`/api/admin/products/${encodeURIComponent(loadedProductId)}/review-summary`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(sections),
+    }));
+
+  const handlePublish = () =>
+    runAction(fetch(`/api/admin/products/${encodeURIComponent(loadedProductId)}/review-summary/publish`, {
+      method: "POST",
+    }));
+
+  const handleUnpublish = () =>
+    runAction(fetch(`/api/admin/products/${encodeURIComponent(loadedProductId)}/review-summary/unpublish`, {
+      method: "POST",
+    }));
+
+  const handleBatchGenerate = () => {
+    setBatchBusy(true);
+    setBatchResult(null);
+    runFlowAnimated(fetch("/api/admin/review-summaries/batch-generate", { method: "POST" }))
+      .then((res) => res.json())
+      .then((body) => setBatchResult(body))
+      .catch(() => setBatchResult({ error: "Batch generation failed to run." }))
+      .finally(() => setBatchBusy(false));
+  };
+
+  const summary = data && data.summary;
+
+  return (
+    <div className="app-frame">
+      <div className="home-top" style={{ paddingBottom: 16 }}>
+        <button className="back-arrow" onClick={() => { window.location.href = "/admin"; }}>‹</button>
+        <div className="persona-select-title" style={{ textAlign: "left", marginTop: 10 }}>Review Summary (AI)</div>
+        <div className="persona-select-subtitle" style={{ textAlign: "left" }}>
+          Only approved reviews are used. A generated (or edited) summary goes live immediately.
+        </div>
+        <button
+          className="admin-resubmit-btn"
+          style={{ marginTop: 10, background: "rgba(255,255,255,0.9)" }}
+          onClick={() =>
+            window.open(
+              "/admin/review-summary/how-it-works",
+              "reviewSummaryHowItWorks",
+              "width=480,height=760,menubar=no,toolbar=no,location=no,status=no,resizable=yes,scrollbars=yes"
+            )
+          }
+        >
+          Show how this works ℹ️ (opens in new window)
+        </button>
+      </div>
+
+      <div className="admin-review-list">
+        <div className="admin-review-card">
+          <div className="admin-review-product">Batch utility</div>
+          <p className="admin-review-text" style={{ marginTop: 6 }}>
+            Generates (and auto-publishes) summaries for every product that either has never been
+            summarized (5+ approved written reviews) or has gotten 3+ new approved written reviews
+            since its last summary was generated.
+          </p>
+          <div className="admin-review-actions" style={{ marginTop: 6 }}>
+            <button className="admin-resubmit-btn" disabled={batchBusy} onClick={handleBatchGenerate}>
+              {batchBusy ? "Running..." : "Generate Review Summaries"}
+            </button>
+          </div>
+
+          {batchResult && batchResult.error && (
+            <div className="pdp-review-error" style={{ marginTop: 10 }}>{batchResult.error}</div>
+          )}
+          {batchResult && !batchResult.error && (
+            <div style={{ marginTop: 10 }}>
+              <div className="pdp-review-success">
+                {batchResult.candidates_found === 0
+                  ? "No products currently qualify."
+                  : `${batchResult.generated}/${batchResult.candidates_found} summaries generated and published.`}
+                {batchResult.failed > 0 ? ` ${batchResult.failed} failed.` : ""}
+              </div>
+              {batchResult.results.length > 0 && (
+                <div className="pdp-spec-table" style={{ marginTop: 6 }}>
+                  {batchResult.results.map((r) => (
+                    <div className="pdp-spec-row" key={r.product_id}>
+                      <span className="pdp-spec-label">{r.product_name}</span>
+                      <span className="pdp-spec-value">{r.status === "generated" ? "✅ Published" : "❌ Failed"}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <form className="admin-review-tabs" onSubmit={handleLookup} style={{ gap: 8 }}>
+        <input
+          className="pdp-review-textarea"
+          style={{ margin: 0, flex: 2 }}
+          placeholder="Product id, e.g. prod_985"
+          value={productIdInput}
+          onChange={(e) => setProductIdInput(e.target.value)}
+        />
+        <button type="submit" className="admin-approve-btn" style={{ flex: 1 }}>Look up</button>
+      </form>
+
+      {error && <div className="pdp-review-error" style={{ margin: 16 }}>{error}</div>}
+
+      {data && (
+        <div className="admin-review-list">
+          <div className="admin-review-card">
+            <div className="admin-review-product">{data.product.name}</div>
+            <div className="admin-review-persona">
+              {data.eligible_review_count} approved written review{data.eligible_review_count === 1 ? "" : "s"}
+              {" "}(needs {data.min_reviews_required}+ to generate)
+            </div>
+
+            {!data.eligible && !summary && (
+              <p className="admin-review-text" style={{ marginTop: 10 }}>
+                Not enough reviews yet - come back once this product has at least{" "}
+                {data.min_reviews_required} approved written reviews.
+              </p>
+            )}
+
+            {data.eligible && (
+              <div className="admin-review-actions" style={{ marginTop: 10 }}>
+                <button className="admin-resubmit-btn" disabled={busy} onClick={handleGenerate}>
+                  {summary ? "Regenerate (publishes immediately)" : "Generate Summary (publishes immediately)"}
+                </button>
+              </div>
+            )}
+
+            {summary && (
+              <React.Fragment>
+                {summary.is_edited && (
+                  <div className="pdp-review-hint" style={{ marginTop: 10 }}>
+                    This text has been manually edited since it was last generated.
+                  </div>
+                )}
+
+                <div className="checkout-section-title" style={{ marginTop: 14 }}>
+                  {summary.published ? "Live on PDP (editable)" : "Draft (not published)"}
+                </div>
+
+                {SUMMARY_SECTION_DEFS.map((def) => (
+                  <div key={def.key} style={{ marginBottom: 10 }}>
+                    <div className="admin-review-persona" style={{ marginBottom: 4 }}>
+                      {def.icon} {def.title}
+                    </div>
+                    <textarea
+                      className="pdp-review-textarea"
+                      rows={3}
+                      placeholder={`(empty - nothing for "${def.title}")`}
+                      value={sections[def.key] || ""}
+                      onChange={(e) => setSections((prev) => ({ ...prev, [def.key]: e.target.value }))}
+                    />
+                  </div>
+                ))}
+
+                <div className="admin-review-actions" style={{ marginTop: 8 }}>
+                  <button
+                    className="admin-approve-btn"
+                    disabled={
+                      busy ||
+                      !Object.values(sections).some((v) => (v || "").trim()) ||
+                      JSON.stringify(sections) === JSON.stringify(summary.draft || EMPTY_SUMMARY_SECTIONS)
+                    }
+                    onClick={handleSave}
+                  >
+                    Save (publishes immediately)
+                  </button>
+                  {summary.published ? (
+                    <button className="admin-reject-btn" disabled={busy} onClick={handleUnpublish}>
+                      Unpublish
+                    </button>
+                  ) : (
+                    <button className="admin-resubmit-btn" disabled={busy} onClick={handlePublish}>
+                      Publish
+                    </button>
+                  )}
+                </div>
+              </React.Fragment>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div className="bottom-nav-spacer" />
+    </div>
+  );
+}
+
+function App() {
+  const [persona, setPersona] = useState(() => loadStoredPersona());
+  const [enteredStorefront, setEnteredStorefront] = useState(false);
+
+  // /admin (and its /admin/reviews sub-page) are a separate, ungated
+  // experience (Retailer Admin) - deliberately skip the persona check
+  // below, checked via the raw URL rather than React Router since this
+  // decision happens before BrowserRouter itself mounts (same place
+  // the persona gate already lived). More specific path checked first.
+  if (typeof window !== "undefined" && window.location.pathname === "/admin/reviews") {
+    return <ReviewModerationPage />;
+  }
+  if (typeof window !== "undefined" && window.location.pathname === "/admin/reviews/how-it-works") {
+    return <ModerationFlowPage />;
+  }
+  if (typeof window !== "undefined" && window.location.pathname === "/admin/review-summary") {
+    return <ReviewSummaryToolPage />;
+  }
+  if (typeof window !== "undefined" && window.location.pathname === "/admin/review-summary/how-it-works") {
+    return <ReviewSummaryFlowPage />;
+  }
+  if (typeof window !== "undefined" && window.location.pathname === "/admin") {
+    return <RetailerAdminPage />;
+  }
+
+  // True landing page - only at the exact root path, and only before a
+  // persona is chosen AND before Storefront has been clicked this
+  // session. A returning visitor with a persona already stored skips
+  // straight past it (handled by the `!persona` check below); a deep
+  // link straight to e.g. /product/x also skips it, going straight to
+  // PersonaSelectPage instead, since arriving via a specific link
+  // implies they already know where they're headed.
+  if (typeof window !== "undefined" && window.location.pathname === "/" && !persona && !enteredStorefront) {
+    return <LandingPage onEnterStorefront={() => setEnteredStorefront(true)} />;
+  }
+
+  if (!persona) {
+    return (
+      <PersonaSelectPage
+        onSelect={(p) => {
+          storePersona(p);
+          setPersona(p);
+        }}
+        onBack={() => setEnteredStorefront(false)}
+      />
+    );
+  }
+
+  const switchPersona = () => {
+    clearStoredPersona();
+    setPersona(null);
+  };
+
+  return (
+    <PersonaContext.Provider value={{ persona, switchPersona }}>
+      <CartProvider personaId={persona.id}>
+        <BrowserRouter>
+          <Routes>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/search" element={<SearchPage />} />
+            <Route path="/results" element={<ResultsPage />} />
+            <Route path="/category/:categoryId" element={<PLPPage />} />
+            <Route path="/product/:productId" element={<ProductDetailPage />} />
+            <Route path="/cart" element={<CartPage />} />
+            <Route path="/checkout" element={<CheckoutPage />} />
+            <Route path="/order/:orderId" element={<OrderDetailPage />} />
+            <Route path="/orders" element={<OrdersPage />} />
+            <Route path="/coming-soon" element={<ComingSoonPage />} />
+          </Routes>
+        </BrowserRouter>
+      </CartProvider>
+    </PersonaContext.Provider>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
